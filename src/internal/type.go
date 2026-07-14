@@ -57,6 +57,7 @@ type model struct {
 	processBarModel processbar.Model
 	clipboard       clipboard.Model
 	clipboardWriter func(string) error
+	osClipboard     clipboard.OSClipboard
 	focusPanel      focusPanelType
 
 	// Modals

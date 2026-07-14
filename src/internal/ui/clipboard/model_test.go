@@ -76,6 +76,26 @@ func TestClipboardRender_Empty(t *testing.T) {
 	})
 }
 
+func TestIsEmpty(t *testing.T) {
+	t.Run("Empty clipboard returns true", func(t *testing.T) {
+		m := &Model{}
+		assert.True(t, m.IsEmpty())
+	})
+
+	t.Run("Clipboard with items returns false", func(t *testing.T) {
+		m := &Model{}
+		m.SetItems([]string{"/tmp/test.txt"})
+		assert.False(t, m.IsEmpty())
+	})
+
+	t.Run("Clipboard after Reset returns true", func(t *testing.T) {
+		m := &Model{}
+		m.SetItems([]string{"/tmp/test.txt"})
+		m.Reset(false)
+		assert.True(t, m.IsEmpty())
+	})
+}
+
 func TestPruneInaccessibleItemsAndGet(t *testing.T) {
 	dir := t.TempDir()
 	files := []string{filepath.Join(dir, "f1"), filepath.Join(dir, "f2")}

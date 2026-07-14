@@ -50,6 +50,7 @@ cut_items = ['ctrl+x', '']
 delete_items = ['ctrl+d', 'delete', '']
 paste_items = ['ctrl+v', 'ctrl+w', '']
 permanently_delete_items = ['D', '']
+full_reselect = ['ctrl+shift+c', '']
 
 #-- Archive Manipulation
 compress_file = ['ctrl+a', '']
@@ -77,7 +78,7 @@ toggle_footer = ['F', '']
 # Note: These hotkeys can override all hotkeys.
 
 confirm_typing = ['enter', '']
-cancel_typing = ['ctrl+c', 'esc']
+cancel_typing = ['ctrl+shift+c', 'esc']
 
 ###############################################################################
 #                            Mode-Specific Hotkeys                            #

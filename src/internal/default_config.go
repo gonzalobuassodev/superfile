@@ -17,6 +17,7 @@ import (
 	"github.com/yorukot/superfile/src/internal/common"
 	"github.com/yorukot/superfile/src/internal/ui/prompt"
 	zoxideui "github.com/yorukot/superfile/src/internal/ui/zoxide"
+	"github.com/yorukot/superfile/src/pkg/file_preview"
 )
 
 // Generate and return model containing default configurations for interface
@@ -34,6 +35,7 @@ func defaultModelConfig(toggleDotFile, toggleFooter, firstUse bool,
 		focusPanel:      nonePanelFocus,
 		processBarModel: processbar.New(),
 		clipboardWriter: clipboard.WriteAll,
+		osClipboard:     filepreview.NewOSClipboard(),
 		sidebarModel:    sidebar.New(),
 		fileMetaData:    metadata.New(),
 		fileModel:       filemodel.New(firstPanelPaths, toggleDotFile),

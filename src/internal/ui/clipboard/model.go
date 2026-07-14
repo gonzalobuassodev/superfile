@@ -10,6 +10,18 @@ import (
 	"github.com/yorukot/superfile/src/internal/ui"
 )
 
+// OSClipboard defines the interface for OS-level clipboard operations
+// on file URIs. Implementations dispatch to platform-specific tools
+// (osascript on macOS, xclip/wl-clipboard on Linux).
+type OSClipboard interface {
+	// WriteFileURIs writes file:// URIs for the given paths to the OS clipboard.
+	WriteFileURIs(paths []string) error
+
+	// ReadFileURIs reads file:// URIs from the OS clipboard and returns
+	// the parsed file paths. Returns empty slice if no file URIs are found.
+	ReadFileURIs() ([]string, error)
+}
+
 // The fact that its visible in UI or not, is controlled by the main model
 type Model struct {
 	width  int
@@ -100,6 +112,11 @@ func (m *Model) PruneInaccessibleItemsAndGet() []string {
 
 func (m *Model) Len() int {
 	return len(m.items.items)
+}
+
+// IsEmpty returns true when the clipboard has no items.
+func (m *Model) IsEmpty() bool {
+	return len(m.items.items) == 0
 }
 
 func (m *Model) GetWidth() int {

@@ -91,8 +91,12 @@ func adjustOrientation(img image.Image, orientation int) image.Image {
 	}
 }
 
-// resizeForANSI resizes image specifically for ANSI rendering
-func resizeForANSI(img image.Image, maxWidth, maxHeight int) image.Image {
-	// Use maxHeight*2 because each terminal row represents 2 pixel rows in ANSI rendering
-	return imaging.Fit(img, maxWidth, maxHeight*heightScaleFactor, imaging.Lanczos)
+// resizeForANSIDithered resizes an image to the exact terminal cell grid
+// (maxWidth × maxHeight) for the Floyd-Steinberg dithered ANSI renderer.
+// Each cell maps to one source pixel. Lanczos + unsharp mask gives crisp
+// output at low terminal resolutions.
+func resizeForANSIDithered(img image.Image, maxWidth, maxHeight int) image.Image {
+	resized := imaging.Fit(img, maxWidth, maxHeight, imaging.Lanczos)
+	// Unsharp mask (40/100) keeps edges defined at low resolution.
+	return imaging.Sharpen(resized, 40.0)
 }

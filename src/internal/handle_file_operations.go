@@ -242,33 +242,83 @@ func (m *model) getDeleteTriggerCmd(deletePermanent bool) tea.Cmd {
 
 // Copy directory or file's path to superfile's clipboard
 // set cut to true/false accordingly
-func (m *model) copySingleItem(cut bool) {
+func (m *model) copySingleItem(cut bool) tea.Cmd {
 	panel := m.getFocusedFilePanel()
 	m.clipboard.Reset(cut)
 	if panel.Empty() {
-		return
+		return nil
 	}
+	location := panel.GetFocusedItem().Location
 	slog.Debug("handle_file_operations.copySingleItem", "cut", cut,
-		"panel location", panel.GetFocusedItem().Location)
-	m.clipboard.Add(panel.GetFocusedItem().Location)
+		"panel location", location)
+	m.clipboard.Add(location)
+
+	// Write to OS clipboard asynchronously so we don't block the event loop
+	if m.osClipboard != nil {
+		return m.writeOSClipboardCmd([]string{location})
+	}
+	return nil
 }
 
 // Copy all selected file or directory's paths to the clipboard
-func (m *model) copyMultipleItem(cut bool) {
+func (m *model) copyMultipleItem(cut bool) tea.Cmd {
 	panel := m.getFocusedFilePanel()
 	m.clipboard.Reset(cut)
 	if panel.SelectedCount() == 0 {
-		return
+		return nil
 	}
 	items := panel.GetSelectedLocationsSortedAsVisible()
 	slog.Debug("handle_file_operations.copyMultipleItem", "cut", cut,
 		"panel selected files", items)
 	m.clipboard.SetItems(items)
+
+	// Write to OS clipboard asynchronously so we don't block the event loop
+	if m.osClipboard != nil {
+		return m.writeOSClipboardCmd(items)
+	}
+	return nil
+}
+
+// writeOSClipboardCmd returns a tea.Cmd that writes file paths to the
+// OS clipboard in the background. This avoids blocking the event loop
+// with synchronous osascript/xclip subprocess calls.
+func (m *model) writeOSClipboardCmd(paths []string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.osClipboard.WriteFileURIs(paths)
+		if err != nil {
+			slog.Debug("Failed to write to OS clipboard", "error", err)
+		}
+		return nil
+	}
 }
 
 func (m *model) getPasteItemCmd() tea.Cmd {
-	copyItems := m.clipboard.PruneInaccessibleItemsAndGet()
-	cut := m.clipboard.IsCut()
+	// Read from OS clipboard directly (macOS system / xclip).
+	// Internal clipboard is used for copy/cut metadata only.
+	var copyItems []string
+	cut := false
+
+	if m.osClipboard != nil {
+		osItems, err := m.osClipboard.ReadFileURIs()
+		if err != nil {
+			slog.Debug("Failed to read from OS clipboard", "error", err)
+		}
+		if len(osItems) > 0 {
+			// Validate paths with os.Lstat
+			validItems := make([]string, 0, len(osItems))
+			for _, p := range osItems {
+				if _, statErr := os.Lstat(p); statErr == nil {
+					validItems = append(validItems, p)
+				}
+			}
+			if len(validItems) > 0 {
+				// OS clipboard has no cut concept — always paste as copy
+				copyItems = validItems
+				cut = false
+			}
+		}
+	}
+
 	if len(copyItems) == 0 {
 		return nil
 	}

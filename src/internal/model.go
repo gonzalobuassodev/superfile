@@ -272,8 +272,6 @@ func (m *model) setFooterComponentSize() {
 // Identify the current state of the application m and properly handle the
 // msg keybind pressed
 func (m *model) handleKeyInput(msg tea.KeyPressMsg) tea.Cmd {
-	slog.Debug("model.handleKeyInput", "msg", msg, "typestr", msg.String(),
-		"code", msg.Code, "text", msg.Text, "mod", msg.Mod)
 	slog.Debug("model.handleKeyInput. model info. ",
 		"fileModel.FocusedPanelIndex", m.fileModel.FocusedPanelIndex,
 		"filePanel.isFocused", m.getFocusedFilePanel().IsFocused,

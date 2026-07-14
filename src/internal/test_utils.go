@@ -124,10 +124,15 @@ func ExecuteTeaCmdWithTimeout(cmd tea.Cmd, timeout time.Duration) tea.Msg {
 // Helper function to perform copy or cut operation
 func performCopyOrCutOperation(t *testing.T, m *model, isCut bool) {
 	t.Helper()
+	var cmd tea.Cmd
 	if isCut {
-		TeaUpdate(m, utils.TeaRuneKeyMsg(common.Hotkeys.CutItems[0]))
+		cmd = TeaUpdate(m, utils.TeaRuneKeyMsg(common.Hotkeys.CutItems[0]))
 	} else {
-		TeaUpdate(m, utils.TeaRuneKeyMsg(common.Hotkeys.CopyItems[0]))
+		cmd = TeaUpdate(m, utils.TeaRuneKeyMsg(common.Hotkeys.CopyItems[0]))
+	}
+	// Execute async OS clipboard write if one was returned
+	if cmd != nil {
+		ExecuteTeaCmdWithTimeout(cmd, time.Second)
 	}
 }
 

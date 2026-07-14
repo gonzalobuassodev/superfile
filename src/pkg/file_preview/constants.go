@@ -9,7 +9,6 @@ const (
 	defaultCacheExpiration       = 5 * time.Minute
 
 	// Image processing
-	heightScaleFactor = 2  // Factor for height scaling in terminal display
 	rgbShift16        = 16 // Bit shift for red channel in RGB operations
 	rgbShift8         = 8  // Bit shift for green channel in RGB operations
 
