@@ -17,8 +17,17 @@ func isKittyCapable() bool {
 	termProgram := os.Getenv("TERM_PROGRAM")
 	term := os.Getenv("TERM")
 
-	// TODO: Replace this allowlist with a real Kitty graphics capability check.
-	// tmux masks the underlying terminal through TERM/TERM_PROGRAM.
+	// KITTY_WINDOW_ID is set by the Kitty terminal itself and is a reliable
+	// signal that Kitty graphics protocol is available — even when running
+	// inside a multiplexer that propagates it (e.g. tmux with passthrough).
+	if os.Getenv("KITTY_WINDOW_ID") != "" {
+		return true
+	}
+
+	// Allowlist-based detection. This is inherently fragile because
+	// multiplexers (tmux, herdr, zellij) mask the underlying terminal
+	// through TERM/TERM_PROGRAM. The KITTY_WINDOW_ID check above catches
+	// the common case where the env var is propagated through.
 	knownTerminals := []string{
 		"ghostty",
 		"WezTerm",
@@ -27,6 +36,7 @@ func isKittyCapable() bool {
 		"kitty",
 		"Konsole",
 		"WarpTerminal",
+		"Herdr",
 	}
 
 	for _, knownTerm := range knownTerminals {
