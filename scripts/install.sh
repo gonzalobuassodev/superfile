@@ -73,5 +73,22 @@ else
   info "Install fish and run: fish scripts/install-macos.fish"
 fi
 
+# ── ghostty config ─────────────────────────────────────────────────────
+if [ -f "${HOME}/.config/ghostty/config" ]; then
+  if ! grep -q "cmd+c=text:\\\\x03" "${HOME}/.config/ghostty/config" 2>/dev/null; then
+    info "Adding Cmd+C/V passthrough to Ghostty config..."
+    cat >> "${HOME}/.config/ghostty/config" << 'GHOSTTY'
+
+# Superfile: Cmd+C/V = Ctrl+C/V (copy/paste de archivos)
+keybind = cmd+c=text:\x03
+keybind = cmd+v=text:\x16
+GHOSTTY
+    ok "Added Cmd+C/V passthrough to ~/.config/ghostty/config"
+  else
+    ok "Ghostty already has Cmd+C/V passthrough"
+  fi
+fi
+
 printf "\n\033[32m✅ Done!\033[0m Open a new terminal and run \033[1ms\033[0m to start superfile.\n"
 printf "   Press \033[1mq\033[0m to quit and cd to the last browsed directory.\n"
+printf "\033[90m   Restart Ghostty if Cmd+C/V don't work (close & reopen terminal).\033[0m\n"
