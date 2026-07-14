@@ -15,8 +15,8 @@
 
 #-- Basic Actions
 confirm = ['enter', 'right', 'l']
-cd_quit = ['Q', '']
-quit = ['q', 'esc']
+cd_quit = ['q', 'Q', '']
+quit = ['esc']
 
 #-- Navigation
 list_down = ['down', 'j']
