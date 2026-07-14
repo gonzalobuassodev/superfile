@@ -47,7 +47,7 @@ file_panel_item_rename = ['ctrl+r', '']
 #-- Main File Operations
 copy_items = ['cmd+c', 'ctrl+c', '']
 cut_items = ['ctrl+x', '']
-delete_items = ['ctrl+d', 'delete', '']
+delete_items = ['ctrl+d', 'delete', 'cmd+backspace', '']
 paste_items = ['cmd+v', 'ctrl+v', 'ctrl+w', '']
 permanently_delete_items = ['D', '']
 full_reselect = ['ctrl+shift+c', '']

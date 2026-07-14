@@ -45,9 +45,10 @@ if test -f "$ghostty_config"
     if not grep -q "cmd+c=text:\\\\x03" "$ghostty_config" 2>/dev/null
         echo "  -> Adding Cmd+C/V passthrough to Ghostty config..."
         echo "
-# Superfile: Cmd+C/V = Ctrl+C/V (copy/paste de archivos)
+# Superfile: Cmd macOS shortcuts para copy/paste/delete
 keybind = cmd+c=text:\\x03
-keybind = cmd+v=text:\\x16" >> "$ghostty_config"
+keybind = cmd+v=text:\\x16
+keybind = cmd+backspace=text:\\x04" >> "$ghostty_config"
         echo "  -> Done. Restart Ghostty to apply."
     else
         echo "  -> Ghostty already configured."

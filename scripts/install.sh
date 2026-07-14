@@ -79,11 +79,12 @@ if [ -f "${HOME}/.config/ghostty/config" ]; then
     info "Adding Cmd+C/V passthrough to Ghostty config..."
     cat >> "${HOME}/.config/ghostty/config" << 'GHOSTTY'
 
-# Superfile: Cmd+C/V = Ctrl+C/V (copy/paste de archivos)
+# Superfile: Cmd macOS shortcuts para copy/paste/delete
 keybind = cmd+c=text:\x03
 keybind = cmd+v=text:\x16
+keybind = cmd+backspace=text:\x04
 GHOSTTY
-    ok "Added Cmd+C/V passthrough to ~/.config/ghostty/config"
+    ok "Added Ghostty keybindings for superfile"
   else
     ok "Ghostty already has Cmd+C/V passthrough"
   fi
