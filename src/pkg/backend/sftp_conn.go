@@ -136,6 +136,16 @@ func LoadSSHConnectionsFromConfigFile() ([]SSHConnection, error) {
 			if !isRoutableHost(alias) || seen[alias] {
 				continue
 			}
+
+			// Skip hosts that require a jump host (ProxyJump) or use a
+			// custom ProxyCommand — these are not directly reachable for SFTP.
+			if proxyJump, _ := cfg.Get(alias, "ProxyJump"); proxyJump != "" {
+				continue
+			}
+			if proxyCmd, _ := cfg.Get(alias, "ProxyCommand"); proxyCmd != "" {
+				continue
+			}
+
 			seen[alias] = true
 
 			hostName, _ := cfg.Get(alias, "HostName")
