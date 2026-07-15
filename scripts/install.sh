@@ -75,18 +75,19 @@ fi
 
 # ── ghostty config ─────────────────────────────────────────────────────
 if [ -f "${HOME}/.config/ghostty/config" ]; then
-  if ! grep -q "cmd+c=text:\\\\x03" "${HOME}/.config/ghostty/config" 2>/dev/null; then
-    info "Adding Cmd+C/V passthrough to Ghostty config..."
+  if ! grep -q "cmd+x=text:\\\\x18" "${HOME}/.config/ghostty/config" 2>/dev/null; then
+    info "Adding Cmd+X passthrough to Ghostty config..."
     cat >> "${HOME}/.config/ghostty/config" << 'GHOSTTY'
 
 # Superfile: Cmd macOS shortcuts para copy/paste/delete
 keybind = cmd+c=text:\x03
 keybind = cmd+v=text:\x16
+keybind = cmd+x=text:\x18
 keybind = cmd+backspace=text:\x04
 GHOSTTY
     ok "Added Ghostty keybindings for superfile"
   else
-    ok "Ghostty already has Cmd+C/V passthrough"
+    ok "Ghostty already has Cmd+X passthrough"
   fi
 fi
 
