@@ -39,10 +39,18 @@ func (m *Model) UpdateCurrentFilePanelDir(path string) error {
 		directoryRender: m.renderIndex,
 	}
 
-	if info, err := os.Stat(path); err != nil {
-		return fmt.Errorf("%s : no such file or directory, stats err : %w", path, err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("%s is not a directory", path)
+	// For remote filesystems, skip the stat call — navigation is based on
+	// ReadDir results which already validate existence. Stat over SFTP is an
+	// expensive network round-trip that doubles navigation latency.
+	// The render cycle catches any invalid paths on the next frame.
+	if m.FS == nil {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return fmt.Errorf("%s : no such file or directory, stats err : %w", path, statErr)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%s is not a directory", path)
+		}
 	}
 
 	// In case of switching to parent, explicitly set focus.

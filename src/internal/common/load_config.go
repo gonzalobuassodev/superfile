@@ -67,11 +67,12 @@ func ValidateConfig(c *ConfigType) error {
 	for _, order := range c.SidebarSections {
 		if order != utils.SidebarSectionHome &&
 			order != utils.SidebarSectionPinned &&
-			order != utils.SidebarSectionDisks {
+			order != utils.SidebarSectionDisks &&
+			order != utils.SidebarSectionSSH {
 			return errors.New(
 				LoadConfigError(
 					"sidebar_sections",
-					"Sidebar sections contain an unsupported value. Allowed values are: home, pinned, disks.",
+					"Sidebar sections contain an unsupported value. Allowed values are: home, pinned, disks, ssh.",
 				),
 			)
 		}

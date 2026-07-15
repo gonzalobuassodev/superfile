@@ -48,8 +48,9 @@ var (
 	ToggleFooter     = filepath.Join(SuperFileDataDir, "toggleFooter")
 
 	// StateDir files
-	LogFile     = filepath.Join(SuperFileStateDir, "superfile.log")
-	LastDirFile = filepath.Join(SuperFileStateDir, "lastdir")
+	LogFile       = filepath.Join(SuperFileStateDir, "superfile.log")
+	LastDirFile   = filepath.Join(SuperFileStateDir, "lastdir")
+	SSHConfigFile = filepath.Join(SuperFileMainDir, "ssh_connections.toml")
 
 	// Trash Directories
 	DarwinTrashDirectory = filepath.Join(HomeDir, ".Trash")

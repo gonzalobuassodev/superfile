@@ -8,6 +8,7 @@ import (
 
 	"github.com/yorukot/superfile/src/internal/common"
 	"github.com/yorukot/superfile/src/internal/ui"
+	"github.com/yorukot/superfile/src/pkg/backend"
 )
 
 // OSClipboard defines the interface for OS-level clipboard operations
@@ -31,8 +32,9 @@ type Model struct {
 
 // Copied items
 type copyItems struct {
-	items []string
-	cut   bool
+	items    []string
+	cut      bool
+	SourceFS backend.FileSystem // nil means local OS filesystem
 }
 
 func (m *Model) SetDimensions(width int, height int) {
@@ -56,7 +58,13 @@ func (m *Model) Render() string {
 				// TODO: Avoid Lstat during render for performance
 				// Add IsDir/IsLink information in the item type or
 				// better use filepanel's Element strcut as-is
-				fileInfo, err := os.Lstat(m.items.items[i])
+				var fileInfo os.FileInfo
+				var err error
+				if m.items.SourceFS != nil {
+					fileInfo, err = m.items.SourceFS.Stat(m.items.items[i])
+				} else {
+					fileInfo, err = os.Lstat(m.items.items[i])
+				}
 				if err != nil {
 					slog.Error("Clipboard render function get item state ", "error", err)
 					continue
@@ -74,9 +82,19 @@ func (m *Model) IsCut() bool {
 	return m.items.cut
 }
 
-func (m *Model) Reset(cut bool) {
+func (m *Model) Reset(cut bool, sourceFS ...backend.FileSystem) {
 	m.items.cut = cut
 	m.items.items = m.items.items[:0]
+	m.items.SourceFS = nil
+	if len(sourceFS) > 0 {
+		m.items.SourceFS = sourceFS[0]
+	}
+}
+
+// GetSourceFS returns the filesystem the clipboard items originated from.
+// nil means local OS filesystem.
+func (m *Model) GetSourceFS() backend.FileSystem {
+	return m.items.SourceFS
 }
 
 func (m *Model) Add(location string) {
@@ -89,6 +107,13 @@ func (m *Model) SetItems(items []string) {
 }
 
 func (m *Model) pruneInaccessibleItems() {
+	if m.items.SourceFS != nil {
+		m.items.items = slices.DeleteFunc(m.items.items, func(item string) bool {
+			_, err := m.items.SourceFS.Stat(item)
+			return err != nil
+		})
+		return
+	}
 	m.items.items = slices.DeleteFunc(m.items.items, func(item string) bool {
 		_, err := os.Lstat(item)
 		return err != nil

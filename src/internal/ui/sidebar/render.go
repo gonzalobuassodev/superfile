@@ -46,6 +46,12 @@ func (s *Model) directoriesRender(curFilePanelFileLocation string,
 	// so we end up underutilizing one line for our render. But it wont break anything.
 	totalHeight := sideBarInitialHeight
 	mainPanelHeight := s.height - common.BorderPadding
+
+	// Reserve space for the SSH input if in adding mode
+	if s.addingSSH {
+		mainPanelHeight -= 2 // input line + blank line
+	}
+
 	for i := s.renderIndex; i < len(s.directories); i++ {
 		if totalHeight+s.directories[i].requiredHeight() > mainPanelHeight {
 			break
@@ -60,9 +66,11 @@ func (s *Model) directoriesRender(curFilePanelFileLocation string,
 			r.AddLines("", common.SideBarPinnedDivider, "")
 		case diskDividerDir:
 			r.AddLines("", common.SideBarDisksDivider, "")
+		case sshDividerDir:
+			r.AddLines("", common.SideBarSSHDivider, "")
 		default:
 			cursor := " "
-			if s.cursor == i && sideBarFocused && !s.searchBar.Focused() {
+			if s.cursor == i && sideBarFocused && !s.searchBar.Focused() && !s.addingSSH {
 				cursor = icon.Cursor
 			}
 			if s.renaming && s.cursor == i {
@@ -76,5 +84,10 @@ func (s *Model) directoriesRender(curFilePanelFileLocation string,
 				r.AddLineWithCustomTruncate(line, rendering.TailsTruncateRight)
 			}
 		}
+	}
+
+	// Render SSH input at the bottom when adding mode is active
+	if s.addingSSH {
+		r.AddLines("", s.sshInput.View(), "")
 	}
 }

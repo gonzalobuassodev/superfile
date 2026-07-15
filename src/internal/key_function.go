@@ -3,14 +3,17 @@ package internal
 import (
 	"errors"
 	"log/slog"
+	"os"
 	"slices"
+	"strings"
 
 	"github.com/yorukot/superfile/src/internal/common"
 	"github.com/yorukot/superfile/src/internal/ui/filemodel"
 	"github.com/yorukot/superfile/src/internal/ui/filepanel"
-	"github.com/yorukot/superfile/src/internal/ui/spferror"
-
 	"github.com/yorukot/superfile/src/internal/ui/notify"
+	"github.com/yorukot/superfile/src/internal/ui/spferror"
+	"github.com/yorukot/superfile/src/pkg/backend"
+	"github.com/yorukot/superfile/src/pkg/utils"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -70,6 +73,10 @@ func (m *model) mainKey(msg string) tea.Cmd { //nolint: gocyclo,cyclop,funlen //
 		}
 
 	case slices.Contains(common.Hotkeys.CloseFilePanel, msg):
+		// Close remote filesystem connection if panel has one
+		focusedPanel := m.getFocusedFilePanel()
+		m.closeRemotePanel(focusedPanel)
+
 		cmd, err := m.fileModel.CloseFilePanel()
 		if err != nil && !errors.Is(err, filemodel.ErrMinimumPanelCount) {
 			slog.Error("unexpected error while closing new panel", "error", err)
@@ -151,8 +158,7 @@ func (m *model) mainKey(msg string) tea.Cmd { //nolint: gocyclo,cyclop,funlen //
 func (m *model) normalAndBrowserModeKey(msg string) tea.Cmd {
 	// if not focus on the filepanel return
 	if !m.getFocusedFilePanel().IsFocused {
-		m.unfocusedFilePanelKey(msg)
-		return nil
+		return m.unfocusedFilePanelKey(msg)
 	}
 	// Check if in the select mode and focusOn filepanel
 	if m.getFocusedFilePanel().PanelMode == filepanel.SelectMode {
@@ -162,13 +168,13 @@ func (m *model) normalAndBrowserModeKey(msg string) tea.Cmd {
 	return m.filePanelNormalModeKey(msg)
 }
 
-func (m *model) unfocusedFilePanelKey(msg string) {
+func (m *model) unfocusedFilePanelKey(msg string) tea.Cmd {
 	if m.focusPanel != sidebarFocus {
-		return
+		return nil
 	}
 
 	if slices.Contains(common.Hotkeys.Confirm, msg) {
-		m.sidebarSelectDirectory()
+		return m.sidebarSelectDirectory()
 	}
 	if slices.Contains(common.Hotkeys.FilePanelItemRename, msg) {
 		m.sidebarModel.PinnedItemRename()
@@ -176,6 +182,26 @@ func (m *model) unfocusedFilePanelKey(msg string) {
 	if slices.Contains(common.Hotkeys.SearchBar, msg) {
 		m.sidebarSearchBarFocus()
 	}
+	if slices.Contains(common.Hotkeys.SidebarAddSSH, msg) {
+		section := m.sidebarModel.GetCurrentDirectorySection()
+		if section == utils.SidebarSectionSSH {
+			m.sidebarModel.StartAddSSH()
+		}
+	}
+	if slices.Contains(common.Hotkeys.DeleteItems, msg) {
+		section := m.sidebarModel.GetCurrentDirectorySection()
+		if section == utils.SidebarSectionSSH {
+			name := m.sidebarModel.GetCurrentDirectoryName()
+			if name != "" {
+				m.pendingSSHDeleteName = name
+				m.notifyModel = notify.New(true,
+					"Delete SSH Connection",
+					"Delete connection \""+name+"\"?",
+					notify.DeleteSSHConnectionAction)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *model) filePanelSelectModeKey(msg string) tea.Cmd {
@@ -193,9 +219,17 @@ func (m *model) filePanelSelectModeKey(msg string) tea.Cmd {
 	case slices.Contains(common.Hotkeys.PermanentlyDeleteItems, msg):
 		return m.getDeleteTriggerCmd(true)
 	case slices.Contains(common.Hotkeys.CopyItems, msg):
-		return m.copyMultipleItem(false)
+		cmd := m.copyMultipleItem(false)
+		panel.ChangeFilePanelMode()
+		return cmd
 	case slices.Contains(common.Hotkeys.CutItems, msg):
-		return m.copyMultipleItem(true)
+		cmd := m.copyMultipleItem(true)
+		panel.ChangeFilePanelMode()
+		return cmd
+	case slices.Contains(common.Hotkeys.PasteItems, msg):
+		cmd := m.getPasteItemCmd()
+		panel.ChangeFilePanelMode()
+		return cmd
 	case slices.Contains(common.Hotkeys.CopyPath, msg):
 		m.copyPath()
 	case slices.Contains(common.Hotkeys.FilePanelSelectAllItem, msg):
@@ -265,6 +299,8 @@ func (m *model) handleNotifyModelCancel(action notify.ConfirmActionType) tea.Cmd
 		m.modelQuitState = notQuitting
 	case notify.DeleteAction, notify.NoAction, notify.PermanentDeleteAction:
 		// Do nothing
+	case notify.DeleteSSHConnectionAction:
+		m.pendingSSHDeleteName = ""
 	default:
 		slog.Error("Unknown type of action", "action", action)
 	}
@@ -274,15 +310,31 @@ func (m *model) handleNotifyModelCancel(action notify.ConfirmActionType) tea.Cmd
 func (m *model) handleNotifyModelConfirm(action notify.ConfirmActionType) tea.Cmd {
 	switch action {
 	case notify.DeleteAction:
-		return m.getDeleteCmd(false)
+		cmd := m.getDeleteCmd(false)
+		if panel := m.getFocusedFilePanel(); panel.PanelMode == filepanel.SelectMode {
+			panel.ChangeFilePanelMode()
+		}
+		return cmd
 	case notify.PermanentDeleteAction:
-		return m.getDeleteCmd(true)
+		cmd := m.getDeleteCmd(true)
+		if panel := m.getFocusedFilePanel(); panel.PanelMode == filepanel.SelectMode {
+			panel.ChangeFilePanelMode()
+		}
+		return cmd
 	case notify.RenameAction:
 		m.confirmRename()
 	case notify.QuitAction:
 		m.modelQuitState = quitConfirmationReceived
 	case notify.NoAction:
 		// Ignore
+	case notify.DeleteSSHConnectionAction:
+		name := m.pendingSSHDeleteName
+		m.pendingSSHDeleteName = ""
+		if name != "" {
+			if err := backend.RemoveSSHConnection(name); err != nil {
+				slog.Debug("Cannot delete SSH connection", "name", name, "error", err)
+			}
+		}
 	default:
 		slog.Error("Unknown type of action", "action", action)
 	}
@@ -349,6 +401,51 @@ func (m *model) sidebarRenamingKey(msg string) {
 	case slices.Contains(common.Hotkeys.ConfirmTyping, msg):
 		m.sidebarModel.ConfirmSidebarRename()
 	}
+}
+
+func (m *model) sidebarAddSSHKey(msg string) {
+	switch {
+	case slices.Contains(common.Hotkeys.CancelTyping, msg):
+		m.sidebarModel.CancelAddSSH()
+	case slices.Contains(common.Hotkeys.ConfirmTyping, msg):
+		value := m.sidebarModel.ConfirmAddSSH()
+		if value != "" {
+			m.saveSSHConnection(value)
+		}
+	}
+}
+
+// saveSSHConnection parses the user input and saves an SSH connection to the
+// superfile-specific TOML config file.
+func (m *model) saveSSHConnection(input string) {
+	conn := parseSSHInput(input)
+	if err := backend.SaveSSHConnection(conn); err != nil {
+		slog.Error("Error saving SSH connection", "error", err)
+		return
+	}
+	slog.Debug("SSH connection saved", "name", conn.Name)
+}
+
+// parseSSHInput parses a user-provided SSH host string and returns an SSHConnection.
+// It supports "user@host" and plain "host" formats.
+func parseSSHInput(input string) backend.SSHConnection {
+	conn := backend.SSHConnection{
+		Port:     22,
+		AuthType: "key",
+		KeyPath:  backend.DefaultKeyPath(),
+	}
+
+	user, host, ok := strings.Cut(input, "@")
+	if ok && host != "" {
+		conn.User = user
+		conn.Host = host
+		conn.Name = input
+	} else {
+		conn.Host = input
+		conn.Name = input
+		conn.User = os.Getenv("USER")
+	}
+	return conn
 }
 
 // Check the key input and cancel or confirms the search

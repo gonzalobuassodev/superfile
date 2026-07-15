@@ -10,8 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"fmt"
+
 	"github.com/yorukot/superfile/src/config/icon"
 	"github.com/yorukot/superfile/src/internal/common"
+	"github.com/yorukot/superfile/src/pkg/backend"
 	"github.com/yorukot/superfile/src/pkg/utils"
 
 	"charm.land/bubbles/v2/textinput"
@@ -91,6 +94,36 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case preview.UpdateMsg:
 		slog.Debug("Got ModelUpdate message", "id", msg.GetReqID())
 		updateCmd = m.fileModel.UpdatePreviewPanel(msg)
+	case ProcessBarUpdateMsg:
+		slog.Debug("Got ProcessBarUpdateMsg", "id", msg.GetReqID())
+		cmd, err := msg.pMsg.Apply(&m.processBarModel)
+		if err != nil {
+			slog.Error("Error applying processbar update", "error", err)
+		}
+		if cmd != nil {
+			updateCmd = processCmdToTeaCmd(cmd)
+		}
+	case ConnectToSSHMsg:
+		slog.Debug("Got ConnectToSSHMsg", "connection", msg.ConnectionName)
+		updateCmd = m.handleConnectToSSH(msg.ConnectionName)
+	case SSHConnectedMsg:
+		slog.Debug("Got SSHConnectedMsg", "connection", msg.ConnectionName, "error", msg.Error != nil)
+		updateCmd = m.handleSSHConnected(msg)
+	case RemoteDirLoadedMsg:
+		slog.Debug("Got RemoteDirLoadedMsg", "panel", msg.PanelIndex, "error", msg.Error != nil)
+		if msg.PanelIndex >= 0 && msg.PanelIndex < len(m.fileModel.FilePanels) {
+			panel := &m.fileModel.FilePanels[msg.PanelIndex]
+			if msg.Error != nil {
+				slog.Error("Error loading remote directory", "error", msg.Error, "location", msg.Location)
+				panel.RemoteLoading = false
+				break
+			}
+			// Only apply if the panel hasn't navigated to a different location
+			// since this async load was requested.
+			if panel.Location == msg.Location && panel.FS != nil {
+				panel.ApplyRemoteElements(msg.Elements, m.fileModel.DisplayDotFiles)
+			}
+		}
 	case ModelUpdateMessage:
 		slog.Debug("Got ModelUpdate message", "id", msg.GetReqID())
 		updateCmd = msg.ApplyToModel(m)
@@ -102,13 +135,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// This is needed for blink, etc to work
 	panelCmd = m.updateComponentState(msg)
 
-	m.updateModelStateAfterMsg()
+	remoteLoadCmd := m.updateModelStateAfterMsg()
 	filePreviewCmd = m.fileModel.GetFilePreviewCmd(false)
 
 	metadataCmd = m.getMetadataCmd()
 
 	return m, tea.Batch(sidebarCmd, helpMenuCmd, inputCmd, updateCmd,
-		panelCmd, metadataCmd, filePreviewCmd, resizeCmd)
+		panelCmd, metadataCmd, filePreviewCmd, resizeCmd, remoteLoadCmd)
 }
 
 func (m *model) handleMouseMsg(msg tea.MouseMsg) {
@@ -120,9 +153,44 @@ func (m *model) handleMouseMsg(msg tea.MouseMsg) {
 	}
 }
 
-func (m *model) updateModelStateAfterMsg() {
+func (m *model) updateModelStateAfterMsg() tea.Cmd {
 	m.sidebarModel.UpdateDirectories()
-	m.fileModel.UpdateFilePanelsIfNeeded(false)
+
+	var cmds []tea.Cmd
+
+	for i := range m.fileModel.FilePanels {
+		panel := &m.fileModel.FilePanels[i]
+
+		if panel.FS != nil {
+			// Remote panel: load directory asynchronously to avoid blocking
+			// the Bubble Tea event loop with a synchronous SFTP ReadDir call.
+			if panel.Location != panel.LastLoadedLocation {
+				// Clear stale elements and show loading indicator immediately
+				panel.RemoteLoading = true
+				panel.ClearElements()
+
+				idx := i
+				loc := panel.Location
+				fs := panel.FS
+				cmds = append(cmds, func() tea.Msg {
+					infos, err := fs.ReadDir(loc)
+					return RemoteDirLoadedMsg{
+						PanelIndex: idx,
+						Location:   loc,
+						Elements:   infos,
+						Error:      err,
+					}
+				})
+			}
+			// Skip sync load for remote panels — the async result will update
+			// elements when it arrives.
+			continue
+		}
+
+		// Local panel: sync load as before (fast, no network I/O)
+		panel.UpdateElementsIfNeeded(false, m.fileModel.DisplayDotFiles)
+	}
+
 	// TODO: Move to utility
 	if m.focusPanel != metadataFocus {
 		m.fileMetaData.ResetRender()
@@ -132,6 +200,8 @@ func (m *model) updateModelStateAfterMsg() {
 	if !m.firstLoadingComplete {
 		m.firstLoadingComplete = true
 	}
+
+	return tea.Batch(cmds...)
 }
 
 // Note : Maybe we should not trigger metadata fetch for updates
@@ -313,6 +383,8 @@ func (m *model) handleKeyInput(msg tea.KeyPressMsg) tea.Cmd {
 		cmd = m.renamingKey(msg.String())
 	case m.sidebarModel.IsRenaming():
 		m.sidebarRenamingKey(msg.String())
+	case m.sidebarModel.IsAddingSSH():
+		m.sidebarAddSSHKey(msg.String())
 	// If search bar is open
 	case m.getFocusedFilePanel().SearchBar.Focused():
 		m.focusOnSearchbarKey(msg.String())
@@ -606,6 +678,15 @@ func (m *model) quitSuperfile(cdOnQuit bool) {
 	}
 	m.fileModel.FilePreview.CleanUp()
 
+	// Close all active SSH/SFTP connections
+	for name, fs := range m.activeConnections {
+		if err := fs.Close(); err != nil {
+			slog.Error("Error closing SSH connection", "name", name, "error", err)
+		}
+		slog.Debug("Closed SSH connection", "name", name)
+	}
+	m.activeConnections = nil
+
 	// cd on quit
 	currentDir := m.getFocusedFilePanel().Location
 	variable.SetLastDir(currentDir)
@@ -626,4 +707,90 @@ func (m *model) quitSuperfile(cdOnQuit bool) {
 func (m *model) nextIoReqCnt() int {
 	var res = atomic.AddInt32(&m.ioReqCnt, 1)
 	return int(res)
+}
+
+// handleConnectToSSH initiates an SSH connection in a background goroutine
+// and sends back an SSHConnectedMsg with the result.
+func (m *model) handleConnectToSSH(connectionName string) tea.Cmd {
+	return func() tea.Msg {
+		conns, err := backend.LoadSSHConnectionsFromConfigFile()
+		if err != nil {
+			return SSHConnectedMsg{
+				ConnectionName: connectionName,
+				Error:          fmt.Errorf("failed to load SSH connections: %w", err),
+			}
+		}
+
+		var conn *backend.SSHConnection
+		for i := range conns {
+			if conns[i].Name == connectionName {
+				conn = &conns[i]
+				break
+			}
+		}
+
+		if conn == nil {
+			return SSHConnectedMsg{
+				ConnectionName: connectionName,
+				Error:          fmt.Errorf("SSH connection '%s' not found in config", connectionName),
+			}
+		}
+
+		sftpClient, dialErr := backend.DialWithKey(conn.Host, conn.Port, conn.User, conn.KeyPath, backend.DefaultSSHTimeout)
+		if dialErr != nil {
+			// If key auth fails, try password auth (will fail gracefully if no password stored)
+			if conn.AuthType == "password" {
+				return SSHConnectedMsg{
+					ConnectionName: connectionName,
+					Error:          fmt.Errorf("password auth not supported via CLI; use key auth: %w", dialErr),
+				}
+			}
+			return SSHConnectedMsg{
+				ConnectionName: connectionName,
+				Error:          fmt.Errorf("failed to dial SSH: %w", dialErr),
+			}
+		}
+
+		fs := backend.NewSFTPFileSystem(sftpClient, connectionName)
+		return SSHConnectedMsg{
+			ConnectionName: connectionName,
+			FS:             fs,
+		}
+	}
+}
+
+// handleSSHConnected processes the result of an SSH connection attempt.
+func (m *model) handleSSHConnected(msg SSHConnectedMsg) tea.Cmd {
+	if msg.Error != nil {
+		slog.Error("SSH connection failed", "name", msg.ConnectionName, "error", msg.Error)
+		m.notifyModel = notify.New(false, "Connection Failed",
+			"Failed to connect to '"+msg.ConnectionName+"': "+msg.Error.Error(), notify.NoAction)
+		return nil
+	}
+
+	// Store the connection
+	if m.activeConnections == nil {
+		m.activeConnections = make(map[string]backend.FileSystem)
+	}
+	m.activeConnections[msg.ConnectionName] = msg.FS
+
+	// Create a new file panel with the remote filesystem
+	// Start at "/" (root) for remote
+	cmd, err := m.fileModel.CreateNewFilePanel("/", msg.FS)
+	if err != nil {
+		slog.Error("Error creating remote file panel", "error", err)
+		m.notifyModel = notify.New(false, "Error",
+			"Failed to create panel: "+err.Error(), notify.NoAction)
+
+		// Close the connection since the panel failed
+		if closeErr := msg.FS.Close(); closeErr != nil {
+			slog.Error("Error closing remote FS after panel failure", "error", closeErr)
+		}
+		delete(m.activeConnections, msg.ConnectionName)
+		return nil
+	}
+
+	m.notifyModel = notify.New(false, "Connected",
+		"SSH connection '"+msg.ConnectionName+"' established", notify.NoAction)
+	return cmd
 }

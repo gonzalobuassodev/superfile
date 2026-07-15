@@ -20,4 +20,7 @@ type Model struct {
 	height      int
 	disabled    bool
 	sections    []string
+
+	addingSSH bool
+	sshInput  textinput.Model
 }

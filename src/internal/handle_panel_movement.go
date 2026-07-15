@@ -14,6 +14,8 @@ import (
 
 	variable "github.com/yorukot/superfile/src/config"
 	"github.com/yorukot/superfile/src/internal/common"
+	"github.com/yorukot/superfile/src/internal/ui/filepanel"
+	"github.com/yorukot/superfile/src/internal/ui/notify"
 )
 
 // Back to parent directory
@@ -107,21 +109,50 @@ func (m *model) executeOpenCommand() {
 }
 
 // Switch to the directory where the sidebar cursor is located
-func (m *model) sidebarSelectDirectory() {
+func (m *model) sidebarSelectDirectory() tea.Cmd {
 	// We can't do this when we have only divider directories
 	// m.sidebarModel.directories[m.sidebarModel.cursor].location would point to a divider dir.
 	if m.sidebarModel.NoActualDir() {
-		return
+		return nil
 	}
+
+	section := m.sidebarModel.GetCurrentDirectorySection()
+	location := m.sidebarModel.GetCurrentDirectoryLocation()
+
+	// If the selected directory is an SSH connection, initiate the connection
+	if section == utils.SidebarSectionSSH {
+		m.focusPanel = nonePanelFocus
+		m.getFocusedFilePanel().IsFocused = true
+		return func() tea.Msg {
+			return ConnectToSSHMsg{ConnectionName: location}
+		}
+	}
+
 	// TODO(Refactor): Move this to a function m.ResetFocus()
 	m.focusPanel = nonePanelFocus
 	panel := m.getFocusedFilePanel()
 
-	err := m.updateCurrentFilePanelDir(m.sidebarModel.GetCurrentDirectoryLocation())
+	err := m.updateCurrentFilePanelDir(location)
 	if err != nil {
 		slog.Error("Error switching to sidebar directory", "error", err)
 	}
 	panel.IsFocused = true
+	return nil
+}
+
+// closeRemotePanel closes the remote filesystem connection for a panel and
+// shows a disconnect notification.
+func (m *model) closeRemotePanel(panel *filepanel.Model) {
+	if panel.FS == nil {
+		return
+	}
+	connName := panel.FS.Name()
+	if err := panel.FS.Close(); err != nil {
+		slog.Error("Error closing remote filesystem", "name", connName, "error", err)
+	}
+	delete(m.activeConnections, connName)
+	m.notifyModel = notify.New(false, "Disconnected",
+		"SSH connection '"+connName+"' closed", notify.NoAction)
 }
 
 // Toggle dotfile display or not

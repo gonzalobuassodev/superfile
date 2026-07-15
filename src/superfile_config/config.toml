@@ -30,7 +30,7 @@ cd_on_quit = false
 #-- File Preview
 # Should we open a file preview by default whenever selection-hovering over a
 # file?
-default_open_file_preview = true
+default_open_file_preview = false
 
 #-- Image Preview
 # Should we open an image preview by default whenever selection-hovering over an
@@ -134,7 +134,7 @@ sidebar_width = 20
 #-- Sidebar Section Order
 # Order of sidebar sections (valid values: "home", "pinned", "disks")
 # Only enabled sections will be displayed
-sidebar_sections = ["home", "pinned", "disks"]
+sidebar_sections = ["home", "pinned", "disks", "ssh"]
 
 #-- Border
 # Make sure to add strings that are exactly one character wide!

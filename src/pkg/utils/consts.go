@@ -27,6 +27,7 @@ const (
 	SidebarSectionHome   = "home"
 	SidebarSectionPinned = "pinned"
 	SidebarSectionDisks  = "disks"
+	SidebarSectionSSH    = "ssh"
 
 	TabWidth = 4 // Standard tab expansion width
 )

@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/yorukot/superfile/src/internal/ui/sortmodel"
+	"github.com/yorukot/superfile/src/pkg/backend"
 )
 
 // Make sure to use New() to ensure that maps are initialized
@@ -22,6 +23,11 @@ type Model struct {
 	renderIndex int
 	IsFocused   bool
 	Location    string
+	// FileSystem for this panel. nil means local OS filesystem.
+	FS backend.FileSystem
+	// RemoteLoading indicates that an async remote directory load is in progress.
+	// While true, the panel shows a loading indicator instead of stale content.
+	RemoteLoading bool
 	// Dimension fields
 	width  int // Total width including borders
 	height int // Total height including borders
@@ -35,6 +41,9 @@ type Model struct {
 	selectOrderCounter int
 	element            []Element
 	DirectoryRecords   map[string]directoryRecord
+	// LastLoadedLocation is the location for which element was last loaded.
+	// Used by remote panels to detect navigation changes for async loading.
+	LastLoadedLocation string
 	Rename             textinput.Model
 	Renaming           bool
 	SearchBar          textinput.Model

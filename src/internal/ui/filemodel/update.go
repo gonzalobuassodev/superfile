@@ -10,20 +10,29 @@ import (
 	"github.com/yorukot/superfile/src/internal/common"
 	"github.com/yorukot/superfile/src/internal/ui/filepanel"
 	"github.com/yorukot/superfile/src/internal/ui/preview"
+	"github.com/yorukot/superfile/src/pkg/backend"
 )
 
-func (m *Model) CreateNewFilePanel(location string) (tea.Cmd, error) {
+func (m *Model) CreateNewFilePanel(location string, fs ...backend.FileSystem) (tea.Cmd, error) {
 	if m.PanelCount() >= m.MaxFilePanel {
 		return nil, ErrMaximumPanelCount
 	}
 
-	if _, err := os.Stat(location); err != nil {
-		return nil, fmt.Errorf("cannot access location : %s", location)
+	var panelFS backend.FileSystem
+	if len(fs) > 0 {
+		panelFS = fs[0]
+	}
+
+	// Only stat the location for local filesystems
+	if panelFS == nil {
+		if _, err := os.Stat(location); err != nil {
+			return nil, fmt.Errorf("cannot access location : %s", location)
+		}
 	}
 
 	m.FilePanels = append(m.FilePanels, filepanel.New(
 		location, false, "", m.GetFocusedFilePanel().SortKind,
-		m.GetFocusedFilePanel().SortReversed))
+		m.GetFocusedFilePanel().SortReversed, panelFS))
 
 	newPanelIndex := m.PanelCount() - 1
 

@@ -8,7 +8,7 @@ import (
 
 // isDivider returns true if the directory is one of the section dividers.
 func (d directory) isDivider() bool {
-	return d == homeDividerDir || d == pinnedDividerDir || d == diskDividerDir
+	return d == homeDividerDir || d == pinnedDividerDir || d == diskDividerDir || d == sshDividerDir
 }
 
 // requiredHeight returns the number of terminal lines required to render this item.
@@ -74,6 +74,22 @@ func (s *Model) GetCurrentDirectoryLocation() string {
 		return ""
 	}
 	return s.directories[s.cursor].Location
+}
+
+// GetCurrentDirectoryName returns the display name of the currently selected directory.
+func (s *Model) GetCurrentDirectoryName() string {
+	if s.isCursorInvalid() || s.NoActualDir() {
+		return ""
+	}
+	return s.directories[s.cursor].Name
+}
+
+// GetCurrentDirectorySection returns the section of the currently selected directory.
+func (s *Model) GetCurrentDirectorySection() string {
+	if s.isCursorInvalid() || s.NoActualDir() {
+		return ""
+	}
+	return s.directories[s.cursor].Section
 }
 
 // pinnedIndexRange calculates the start and end indices of the pinned directories section.

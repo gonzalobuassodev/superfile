@@ -15,6 +15,7 @@ import (
 	"github.com/yorukot/superfile/src/internal/trash"
 	"github.com/yorukot/superfile/src/internal/ui/filepanel"
 	"github.com/yorukot/superfile/src/internal/ui/spferror"
+	"github.com/yorukot/superfile/src/pkg/backend"
 	"github.com/yorukot/superfile/src/pkg/utils"
 
 	"github.com/yorukot/superfile/src/internal/common"
@@ -154,16 +155,18 @@ func (m *model) getDeleteCmd(permDelete bool) tea.Cmd {
 		items = []string{panel.GetFocusedItem().Location}
 	}
 
-	useTrash := m.hasTrash && trash.Available(panel.Location) && !permDelete
+	isRemoteFS := panel.FS != nil && !panel.FS.IsLocal()
+	useTrash := m.hasTrash && trash.Available(panel.Location) && !permDelete && !isRemoteFS
+	fs := panel.FS
 
 	reqID := m.nextIoReqCnt()
 	slog.Debug("Submitting delete request", "id", reqID, "items cnt", len(items))
 	return func() tea.Msg {
-		return m.deleteOperation(&m.processBarModel, items, useTrash, reqID)
+		return m.deleteOperation(&m.processBarModel, items, useTrash, reqID, fs)
 	}
 }
 
-func (m *model) deleteOperation(processBarModel *processbar.Model, items []string, useTrash bool, reqID int) tea.Msg {
+func (m *model) deleteOperation(processBarModel *processbar.Model, items []string, useTrash bool, reqID int, fs backend.FileSystem) tea.Msg {
 	if len(items) == 0 {
 		return NewDeleteOperationMsg(processbar.Cancelled, reqID)
 	}
@@ -173,14 +176,14 @@ func (m *model) deleteOperation(processBarModel *processbar.Model, items []strin
 		return NewDeleteOperationMsg(processbar.Failed, reqID)
 	}
 	finalizer := func(state processbar.ProcessState, reqID int) tea.Msg { return NewDeleteOperationMsg(state, reqID) }
-	processor := makeDeleteProcessor(p, processBarModel, useTrash)
+	processor := makeDeleteProcessor(p, processBarModel, useTrash, fs)
 	msg := m.runFileProcessor(processor, finalizer, items, reqID)
 	return msg
 }
 
 func makeDeleteProcessor(process processbar.Process,
 	processBarModel *processbar.Model,
-	useTrash bool) processbar.FileListProcessor {
+	useTrash bool, fs backend.FileSystem) processbar.FileListProcessor {
 	processorFunction := func(items []string) (processbar.Process, []string) {
 		notProcessed := make([]string, 0)
 		if len(items) == 0 {
@@ -193,6 +196,8 @@ func makeDeleteProcessor(process processbar.Process,
 				_, err := trash.Move(item)
 				return err
 			}
+		} else if fs != nil && !fs.IsLocal() {
+			deleteFunc = fs.RemoveAll
 		}
 		for i, item := range items {
 			err := deleteFunc(item)
@@ -231,7 +236,8 @@ func (m *model) getDeleteTriggerCmd(deletePermanent bool) tea.Cmd {
 		content := common.TrashWarnContent
 		action := notify.DeleteAction
 
-		if !m.hasTrash || !trash.Available(panel.Location) || deletePermanent {
+		isRemoteFS := panel.FS != nil && !panel.FS.IsLocal()
+		if !m.hasTrash || !trash.Available(panel.Location) || deletePermanent || isRemoteFS {
 			title = common.PermanentDeleteWarnTitle
 			content = common.PermanentDeleteWarnContent
 			action = notify.PermanentDeleteAction
@@ -244,7 +250,7 @@ func (m *model) getDeleteTriggerCmd(deletePermanent bool) tea.Cmd {
 // set cut to true/false accordingly
 func (m *model) copySingleItem(cut bool) tea.Cmd {
 	panel := m.getFocusedFilePanel()
-	m.clipboard.Reset(cut)
+	m.clipboard.Reset(cut, panel.FS)
 	if panel.Empty() {
 		return nil
 	}
@@ -263,7 +269,7 @@ func (m *model) copySingleItem(cut bool) tea.Cmd {
 // Copy all selected file or directory's paths to the clipboard
 func (m *model) copyMultipleItem(cut bool) tea.Cmd {
 	panel := m.getFocusedFilePanel()
-	m.clipboard.Reset(cut)
+	m.clipboard.Reset(cut, panel.FS)
 	if panel.SelectedCount() == 0 {
 		return nil
 	}
@@ -293,12 +299,18 @@ func (m *model) writeOSClipboardCmd(paths []string) tea.Cmd {
 }
 
 func (m *model) getPasteItemCmd() tea.Cmd {
-	// Read from OS clipboard directly (macOS system / xclip).
-	// Internal clipboard is used for copy/cut metadata only.
 	var copyItems []string
 	cut := false
+	var sourceFS backend.FileSystem
 
-	if m.osClipboard != nil {
+	// Check internal clipboard first for remote items
+	sourceFS = m.clipboard.GetSourceFS()
+	if sourceFS != nil && !m.clipboard.IsEmpty() {
+		// Remote items: use internal clipboard directly (no OS clipboard)
+		copyItems = m.clipboard.PruneInaccessibleItemsAndGet()
+		cut = m.clipboard.IsCut()
+	} else if m.osClipboard != nil {
+		// Local items: read from OS clipboard
 		osItems, err := m.osClipboard.ReadFileURIs()
 		if err != nil {
 			slog.Debug("Failed to read from OS clipboard", "error", err)
@@ -312,9 +324,8 @@ func (m *model) getPasteItemCmd() tea.Cmd {
 				}
 			}
 			if len(validItems) > 0 {
-				// OS clipboard has no cut concept — always paste as copy
 				copyItems = validItems
-				cut = false
+				cut = false // OS clipboard has no cut concept
 			}
 		}
 	}
@@ -324,7 +335,9 @@ func (m *model) getPasteItemCmd() tea.Cmd {
 	}
 
 	reqID := m.nextIoReqCnt()
-	panelLocation := m.getFocusedFilePanel().Location
+	targetPanel := m.getFocusedFilePanel()
+	panelLocation := targetPanel.Location
+	targetFS := targetPanel.FS
 
 	slog.Debug("Submitting pasteItems request", "id", reqID, "items cnt", len(copyItems), "dest", panelLocation)
 	return func() tea.Msg {
@@ -333,7 +346,7 @@ func (m *model) getPasteItemCmd() tea.Cmd {
 			return NewNotifyModalMsg(notify.New(true, "Invalid paste location", err.Error(), notify.NoAction),
 				reqID)
 		}
-		return m.executePasteOperation(&m.processBarModel, panelLocation, copyItems, cut, reqID)
+		return m.executePasteOperation(&m.processBarModel, panelLocation, copyItems, cut, reqID, sourceFS, targetFS)
 	}
 }
 
@@ -362,6 +375,7 @@ func validatePasteOperation(panelLocation string, copyItems []string, cut bool) 
 func makePasteProcessor(process processbar.Process,
 	processBarModel *processbar.Model,
 	panelLocation string, cut bool,
+	sourceFS backend.FileSystem, targetFS backend.FileSystem,
 ) processbar.FileListProcessor {
 	processorFunction := func(items []string) (processbar.Process, []string) {
 		notProcessed := make([]string, 0)
@@ -372,13 +386,26 @@ func makePasteProcessor(process processbar.Process,
 		var err error
 		for i, filePath := range items {
 			errMessage := "cut item error"
-			if cut && !isExternalDiskPath(filePath) {
-				err = moveElement(filePath, filepath.Join(panelLocation, filepath.Base(filePath)))
+			destPath := filepath.Base(filePath)
+
+			// Determine paste mode based on source and target filesystems
+			if sourceFS != nil || targetFS != nil {
+				// Any cross-boundary or remote paste
+				var remoteDest string
+				if targetFS != nil {
+					remoteDest = targetFS.Join(panelLocation, destPath)
+				} else {
+					remoteDest = filepath.Join(panelLocation, destPath)
+				}
+				err = remotePasteDir(sourceFS, targetFS, filePath, remoteDest,
+					&process, cut, processBarModel)
+				if err != nil {
+					errMessage = "remote paste item error"
+				}
+			} else if cut && !isExternalDiskPath(filePath) {
+				err = moveElement(filePath, filepath.Join(panelLocation, destPath))
 			} else {
-				// TODO : These error cases are hard to test. We have to somehow make the paste operations fail,
-				// which is time consuming and manual. We should test these with automated testcases
-				// UPD: use "chattr +i" for target catalog to fail past opeations
-				err = pasteDir(filePath, filepath.Join(panelLocation, filepath.Base(filePath)),
+				err = pasteDir(filePath, filepath.Join(panelLocation, destPath),
 					&process, cut, processBarModel)
 				if err != nil {
 					errMessage = "paste item error"
@@ -409,6 +436,7 @@ func makePasteProcessor(process processbar.Process,
 
 func (m *model) executePasteOperation(processBarModel *processbar.Model,
 	panelLocation string, items []string, cut bool, reqID int,
+	sourceFS backend.FileSystem, targetFS backend.FileSystem,
 ) tea.Msg {
 	if len(items) == 0 {
 		return NewPasteOperationMsg(processbar.Cancelled, reqID)
@@ -429,7 +457,7 @@ func (m *model) executePasteOperation(processBarModel *processbar.Model,
 		return NewPasteOperationMsg(processbar.Failed, reqID)
 	}
 	finalizer := func(state processbar.ProcessState, reqId int) tea.Msg { return NewPasteOperationMsg(state, reqId) }
-	processor := makePasteProcessor(p, processBarModel, panelLocation, cut)
+	processor := makePasteProcessor(p, processBarModel, panelLocation, cut, sourceFS, targetFS)
 	msg := m.runFileProcessor(processor, finalizer, items, reqID)
 	return msg
 }

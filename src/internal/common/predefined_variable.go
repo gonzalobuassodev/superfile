@@ -46,6 +46,7 @@ var (
 	SideBarHomeDivider    string
 	SideBarPinnedDivider  string
 	SideBarDisksDivider   string
+	SideBarSSHDivider     string
 	SideBarNoneText       string
 
 	ProcessBarNoneText string
@@ -136,6 +137,7 @@ func LoadPrerenderedVariables() {
 		divider,
 	)
 	SideBarDisksDivider = SidebarTitleStyle.Render(icon.Disk+icon.Space+"Disks") + SidebarDividerStyle.Render(divider)
+	SideBarSSHDivider = SidebarTitleStyle.Render(icon.SSH+icon.Space+"SSH") + SidebarDividerStyle.Render(divider)
 
 	SideBarNoneText = SidebarStyle.Render(" " + icon.Error + icon.Space + "None")
 

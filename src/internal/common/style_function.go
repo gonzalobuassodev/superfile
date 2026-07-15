@@ -169,6 +169,17 @@ func GenerateRenameTextInput(width int, cursorPos int, defaultValue string) text
 	return ti
 }
 
+func GenerateSSHAddInput(width int) textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = FilePanelCursorStyle.Render(icon.SSH + icon.Space)
+	ti.Placeholder = "user@host or hostname"
+	setTextInputStyles(&ti, ModalStyle, ModalStyle)
+	ti.Focus()
+	ti.CharLimit = 156
+	ti.SetWidth(width)
+	return ti
+}
+
 func GeneratePinnedRenameTextInput(cursorPos int, defaultValue string) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = FilePanelCursorStyle.Render(icon.Cursor + " ")

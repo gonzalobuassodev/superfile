@@ -56,11 +56,42 @@ func (s *Model) ConfirmSidebarRename() {
 	}
 }
 
+// StartAddSSH initializes the SSH connection input in the sidebar.
+func (s *Model) StartAddSSH() {
+	s.addingSSH = true
+	s.sshInput = common.GenerateSSHAddInput(s.width - common.BorderPadding - searchBarPadding)
+}
+
+// CancelAddSSH cancels the SSH connection adding process.
+func (s *Model) CancelAddSSH() {
+	s.sshInput.Blur()
+	s.addingSSH = false
+}
+
+// ConfirmAddSSH finalizes the adding process and returns the entered connection name.
+func (s *Model) ConfirmAddSSH() string {
+	value := s.sshInput.Value()
+	s.CancelAddSSH()
+	return value
+}
+
+// IsAddingSSH returns whether the sidebar is currently in SSH adding mode.
+func (s *Model) IsAddingSSH() bool {
+	return s.addingSSH
+}
+
+// GetSSHInputValue returns the current value of the SSH input.
+func (s *Model) GetSSHInputValue() string {
+	return s.sshInput.Value()
+}
+
 // UpdateState handles the sidebar's state updates in response to Bubble Tea messages.
 func (s *Model) UpdateState(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	if s.renaming {
 		s.rename, cmd = s.rename.Update(msg)
+	} else if s.addingSSH {
+		s.sshInput, cmd = s.sshInput.Update(msg)
 	} else if s.searchBar.Focused() {
 		s.searchBar, cmd = s.searchBar.Update(msg)
 	}

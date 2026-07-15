@@ -1,12 +1,14 @@
 package sidebar
 
 import (
+	"log/slog"
 	"os"
 	"runtime"
 	"slices"
 
 	"github.com/adrg/xdg"
 
+	"github.com/yorukot/superfile/src/pkg/backend"
 	"github.com/yorukot/superfile/src/pkg/utils"
 
 	variable "github.com/yorukot/superfile/src/config"
@@ -46,6 +48,7 @@ func getDirectories(pinnedMgr *PinnedManager, sections []string) []directory {
 		getWellKnownDirectories(),
 		getPinnedDirectoriesWithIcon(pinnedMgr),
 		getExternalMediaFolders(),
+		getSSHConnections(),
 		sections,
 	)
 }
@@ -93,6 +96,7 @@ func getFilteredDirectories(query string, pinnedMgr *PinnedManager, sections []s
 		fuzzySearch(query, getWellKnownDirectories()),
 		fuzzySearch(query, getPinnedDirectoriesWithIcon(pinnedMgr)),
 		fuzzySearch(query, getExternalMediaFolders()),
+		fuzzySearch(query, getSSHConnections()),
 		sections,
 	)
 }
@@ -100,8 +104,8 @@ func getFilteredDirectories(query string, pinnedMgr *PinnedManager, sections []s
 // formDirctorySlice assembles the final list of directories for the sidebar based on the configured sections.
 // It ensures that dividers are only added between non-empty sections.
 func formDirctorySlice(homeDirectories []directory, pinnedDirectories []directory,
-	diskDirectories []directory, sections []string) []directory {
-	totalCapacity := len(homeDirectories) + len(pinnedDirectories) + len(diskDirectories) + directoryCapacityForDividers
+	diskDirectories []directory, sshDirectories []directory, sections []string) []directory {
+	totalCapacity := len(homeDirectories) + len(pinnedDirectories) + len(diskDirectories) + len(sshDirectories) + directoryCapacityForDividers
 	directories := make([]directory, 0, totalCapacity)
 
 	for _, section := range sections {
@@ -112,10 +116,35 @@ func formDirctorySlice(homeDirectories []directory, pinnedDirectories []director
 			directories = appendSection(directories, utils.SidebarSectionPinned, pinnedDividerDir, pinnedDirectories)
 		case utils.SidebarSectionDisks:
 			directories = appendSection(directories, utils.SidebarSectionDisks, diskDividerDir, diskDirectories)
+		case utils.SidebarSectionSSH:
+			directories = appendSection(directories, utils.SidebarSectionSSH, sshDividerDir, sshDirectories)
 		}
 	}
 
 	return directories
+}
+
+// getSSHConnections loads SSH connections from ~/.ssh/config and the
+// superfile-specific TOML file, then returns them as sidebar directory entries.
+func getSSHConnections() []directory {
+	conns, err := backend.LoadUserSSHConnections()
+	if err != nil {
+		slog.Error("Error loading SSH connections from config", "error", err)
+		return nil
+	}
+
+	if len(conns) == 0 {
+		return nil
+	}
+
+	dirs := make([]directory, 0, len(conns))
+	for _, conn := range conns {
+		dirs = append(dirs, directory{
+			Name:     icon.SSH + icon.Space + conn.Name,
+			Location: conn.Name, // Use connection name as the identifier
+		})
+	}
+	return dirs
 }
 
 func appendSection(dirs []directory, sectionName string, divider directory, items []directory) []directory {

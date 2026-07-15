@@ -21,6 +21,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 
 	"github.com/yorukot/superfile/src/internal/ui/prompt"
+	"github.com/yorukot/superfile/src/pkg/backend"
 	zoxideui "github.com/yorukot/superfile/src/internal/ui/zoxide"
 )
 
@@ -97,8 +98,15 @@ type model struct {
 	fullWidth    int
 	fullHeight   int
 
+	// Active SSH/SFTP connections keyed by connection name.
+	// Each entry maps to the FileSystem for cleanup on quit.
+	activeConnections map[string]backend.FileSystem
+
 	// whether usable trash directory exists or not
 	hasTrash bool
+
+	// pendingSSHDeleteName holds the SSH connection name being confirmed for deletion.
+	pendingSSHDeleteName string
 }
 
 type typingModal struct {

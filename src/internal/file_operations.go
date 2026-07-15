@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/yorukot/superfile/src/internal/ui/processbar"
+	"github.com/yorukot/superfile/src/pkg/backend"
 	"github.com/yorukot/superfile/src/pkg/utils"
 )
 
@@ -220,6 +221,79 @@ func actualPasteOperation(info os.FileInfo, path string, newPath string, cut boo
 	p.Done++
 	processBarModel.TrySendingUpdateProcessMsg(*p)
 	return nil
+}
+
+// remoteMoveElement moves (renames) a file or directory within a remote FS.
+func remoteMoveElement(fs backend.FileSystem, src, dst string) error {
+	return fs.Rename(src, dst)
+}
+
+// remotePasteDir handles pasting to/from remote filesystems.
+// When sourceFS == nil, it's an upload (local→remote).
+// When targetFS == nil, it's a download (remote→local).
+// When both are non-nil, it's a remote→remote copy.
+func remotePasteDir(sourceFS, targetFS backend.FileSystem, src, dst string,
+	p *processbar.Process, cut bool, processBarModel *processbar.Model) error {
+	dst = renameIfDuplicateLocal(dst)
+
+	if sourceFS == nil && targetFS != nil {
+		// Local → Remote (upload)
+		if err := backend.Upload(targetFS, src, dst); err != nil {
+			return err
+		}
+		if cut {
+			if err := os.RemoveAll(src); err != nil {
+				return fmt.Errorf("failed to remove source after upload: %w", err)
+			}
+		}
+		return nil
+	}
+
+	if sourceFS != nil && targetFS == nil {
+		// Remote → Local (download)
+		if err := backend.Download(sourceFS, src, dst); err != nil {
+			return err
+		}
+		if cut {
+			if err := sourceFS.RemoveAll(src); err != nil {
+				return fmt.Errorf("failed to remove remote source after download: %w", err)
+			}
+		}
+		return nil
+	}
+
+	// Remote → Remote
+	if cut && sameRemoteFS(sourceFS, targetFS) {
+		if err := targetFS.Rename(src, dst); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err := backend.RemoteCopy(sourceFS, targetFS, src, dst); err != nil {
+		return err
+	}
+	if cut {
+		if err := sourceFS.RemoveAll(src); err != nil {
+			return fmt.Errorf("failed to remove remote source after copy: %w", err)
+		}
+	}
+	return nil
+}
+
+// renameIfDuplicateLocal checks for duplicate names on the local filesystem
+// and appends a suffix if needed. For remote destinations, use the FS's own
+// duplicate check.
+func renameIfDuplicateLocal(dst string) string {
+	dst, _ = renameIfDuplicate(dst)
+	return dst
+}
+
+// sameRemoteFS returns true if both FS pointers refer to the same instance.
+func sameRemoteFS(a, b backend.FileSystem) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a == b
 }
 
 // isAncestor checks if dst is the same as src or a subdirectory of src.

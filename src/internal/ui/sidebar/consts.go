@@ -21,8 +21,14 @@ var diskDividerDir = directory{ //nolint: gochecknoglobals // This is more like 
 	Location: "Disks+-*/=?",
 }
 
+var sshDividerDir = directory{ //nolint: gochecknoglobals // This is more like a const.
+	Name:     "",
+	Location: "SSH+-*/=?",
+}
+
 var defaultSectionSlice = []string{ //nolint: gochecknoglobals // This is more like a const.
 	utils.SidebarSectionHome, utils.SidebarSectionPinned, utils.SidebarSectionDisks,
+	utils.SidebarSectionSSH,
 }
 
 // superfile logo + blank line + search bar

@@ -35,7 +35,13 @@ func (m *Model) Render(focused bool) string {
 
 func (m *Model) renderTopBar(r *rendering.Renderer) {
 	// TODO - Add ansitruncate left in renderer and remove truncation here
-	truncatedPath := common.TruncateTextBeginning(m.Location, m.GetContentWidth()-common.InnerPadding, "...")
+	var pathDisplay string
+	if m.FS != nil && !m.FS.IsLocal() {
+		pathDisplay = fmt.Sprintf("%s %s: %s", icon.SSH, m.FS.Name(), m.Location)
+	} else {
+		pathDisplay = m.Location
+	}
+	truncatedPath := common.TruncateTextBeginning(pathDisplay, m.GetContentWidth()-common.InnerPadding, "...")
 	r.AddLines(common.FilePanelTopDirectoryIcon + common.FilePanelTopPathStyle.Render(truncatedPath))
 	r.AddSection()
 }
@@ -78,6 +84,10 @@ func (m *Model) renderColumnHeaders(r *rendering.Renderer) {
 }
 
 func (m *Model) renderFileEntries(r *rendering.Renderer) {
+	if m.RemoteLoading {
+		r.AddLines(remoteLoadingText(m))
+		return
+	}
 	if m.Empty() {
 		r.AddLines(common.FilePanelNoneText)
 		return
@@ -96,6 +106,15 @@ func (m *Model) renderFileEntries(r *rendering.Renderer) {
 		}
 		r.AddLines(builder.String())
 	}
+}
+
+// remoteLoadingText returns the loading indicator text shown while a remote
+// directory read is in progress.
+func remoteLoadingText(m *Model) string {
+	if m.FS == nil || !m.RemoteLoading {
+		return ""
+	}
+	return common.FilePanelStyle.Render(icon.Space + icon.InOperation + icon.Space + "Loading directory...")
 }
 
 func (m *Model) getSortInfo() (string, string) {
