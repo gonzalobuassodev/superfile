@@ -1,269 +1,101 @@
 <div align="center">
-
-<p>
-  <h4>
-    <a href="https://ko-fi.com/yorukot">superfile is supported by the community.</a>
-  </h4>
-<div align="center" markdown="1">
-   <sup>Special thanks to:</sup>
-   <br>
-   <br>
-   <a href="https://www.warp.dev/?utm_source=github&utm_medium=referral&utm_campaign=superfile">
-      <img alt="Warp sponsorship" width="300" src="asset/readme/warp.png">
-   </a>
-
-### [Warp, the AI terminal for developers](https://www.warp.dev/?utm_source=github&utm_medium=referral&utm_campaign=superfile)
-
-[Available for macOS, Linux, & Windows](https://www.warp.dev/?utm_source=github&utm_medium=referral&utm_campaign=superfile)<br>
-
-</div>
-<hr>
-
-</div>
-
-<div align="center">
 <br>
 <picture>
   <source width="300" media="(prefers-color-scheme: dark)" srcset="website/src/assets/superfile-night.svg" />
   <source width="300" media="(prefers-color-scheme: light)" srcset="website/src/assets/superfile-day.svg" />
-  <img alt="superfile LOGO" src="website/src/assets/superfile-day.svg" />
+  <img alt="superfile logo" src="website/src/assets/superfile-day.svg" />
 </picture>
 <br><br>
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/yorukot/superfile)](https://goreportcard.com/report/github.com/yorukot/superfile) [![License MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/yorukot/superfile/refs/heads/main/LICENSE) [![Discord Link](https://img.shields.io/discord/1338415256875307110?label=discord&logo=discord&logoColor=white)](https://discord.gg/YYtJ23Du7B) [![Release](https://img.shields.io/github/v/release/yorukot/superfile.svg?style=flat-square)](https://github.com/yorukot/superfile/releases/latest) ![Homebrew downloads](https://img.shields.io/homebrew/installs/dy/superfile?label=Homebrew) ![GitHub downloads](https://img.shields.io/github/downloads/yorukot/superfile/total?label=GitHub%20downloads%20assets%2Freleases) [![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/yorukot/superfile?utm_source=oss&utm_medium=github&utm_campaign=yorukot%2Fsuperfile&labelColor=171717&color=FF570A&&label=CodeRabbit+Reviews)](https://www.coderabbit.ai/)
+**Pretty fancy, good-looking terminal file manager** — with SSH/SFTP remote file support & macOS-first polish.
 
-![](website/src/assets/demo.png)
+[![License MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/yorukot/superfile/refs/heads/main/LICENSE)
 
 </div>
 
-## Demo
+## What is this?
 
-| Perform common operations  |
-| -------------------------- |
-| ![](asset/readme/demo.gif) |
+This is a **fork** of [superfile](https://github.com/yorukot/superfile) by [yorukot](https://github.com/yorukot), with added remote file management over SSH/SFTP and macOS quality-of-life improvements.
 
-## Content
+## What's different from upstream?
 
-- [Demo](#demo)
-- [Content](#content)
-- [Installation](#installation)
-  - [macOS and Linux](#macos-and-linux)
-  - [Windows](#windows)
-    - [Powershell](#powershell)
-    - [Winget](#winget)
-    - [Scoop](#scoop)
-  - [More installation methods](#more-installation-methods)
-- [Build](#build)
-  - [For macOS/Linux](#for-macoslinux)
-  - [For Windows](#for-windows)
-- [Start superfile](#start-superfile)
-- [Supported Systems](#supported-systems)
-- [Tutorial](#tutorial)
-- [Plugins](#plugins)
-- [Themes](#themes)
-- [Hotkeys](#hotkeys)
-- [Notes](#notes)
-- [Troubleshooting](#troubleshooting)
-- [Uninstalling](#uninstalling)
-  - [macOS and Linux](#macos-and-linux-1)
-  - [Window](#window)
-- [Contributing](#contributing)
-- [Thanks](#thanks)
-  - [Support](#support)
-  - [Core maintainer](#core-maintainer)
-  - [Contributors](#contributors)
-  - [Powered by](#powered-by)
-  - [Star History](#star-history)
-- [༼ つ ◕\_◕ ༽つ Please share.](#-つ-_-つ-please-share)
+- **SSH/SFTP remote file panel** — browse, navigate, and manage files on remote servers directly from the sidebar
+- **Remote-aware clipboard** — copy/paste works across local and remote panels; files stay on the server
+- **SSH connection manager** — add/delete connections from the sidebar with confirmation dialogs
+- **macOS Cmd+C/V passthrough** — native keyboard shortcuts work in terminals like Ghostty, iTerm2, and Kitty
+- **macOS Cmd+Backspace delete** — permanent file deletion with a confirmation prompt
+- **Preview panel hidden by default** — cleaner startup, toggle on when needed
+- **`cd on quit` for Fish shell** — exit superfile and cd to the last browsed directory
+- **Ghostty keybindings** auto-configured on install
 
-## Installation
-
-### macOS and Linux
+## Quick install
 
 ```bash
-bash -c "$(curl -sLo- https://superfile.dev/install.sh)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/gonzalobuassodev/superfile/main/scripts/install.sh)"
 ```
 
-If you want to inspect the script, see : [install.sh](./website/public/install.sh)
+Requires [Go](https://go.dev/dl/). Installs to `~/.local/bin/spf`, sets up Fish integration and Ghostty keybindings automatically.
 
-### Windows
-
-#### Powershell
-
-```powershell
-powershell -ExecutionPolicy Bypass -Command "Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://superfile.dev/install.ps1'))"
-```
-
-If you want to inspect the script, see : [install.ps1](./website/public/install.ps1)
-
-#### [Winget](https://winget.run/)
-
-```powershell
-winget install --id yorukot.superfile
-```
-
-#### [Scoop](https://scoop.sh/)
-
-```
-scoop install superfile
-```
-
-### More installation methods
-
-[Click me to check on how to install](https://superfile.dev/getting-started/installation/)
-
-## Build
-
-You can build the source code yourself by using these steps:
-
-**Requirements**
-
-- [golang](https://go.dev/doc/install)
-
-**Build Steps**
-
-Clone this repository using the following command:
-
-```
-git clone https://github.com/yorukot/superfile.git --depth=1
-```
-
-Enter the downloaded directory:
+### Manual build
 
 ```bash
+git clone https://github.com/gonzalobuassodev/superfile.git --depth=1
 cd superfile
+go build -tags embed -o ~/.local/bin/spf .
 ```
 
-### For macOS/Linux
-
-Run the `build.sh` file:
-
-```bash
-./build.sh
-```
-
-Add the binary file to your $PATH, e.g., in `/usr/local/bin`:
-
-```bash
-sudo mv ./bin/spf /usr/local/bin
-```
-
-### For Windows
-
-```bash
-go build -o bin/spf.exe
-```
-
-Edit System Environment Variables and add superfile repo's `bin` directory to your PATH
-
-## Start superfile
+## Usage
 
 ```bash
 spf
 ```
 
-## Supported Systems
+Or with the Fish alias (auto-configured on install):
 
-- \[x\] Linux
-- \[x\] macOS
-- \[x\] Windows (Not fully supported yet)
+```bash
+s
+```
 
-## Tutorial
+### Remote file management
 
-After you install superfile, you can go [here](https://superfile.dev/getting-started/tutorial/) to briefly understand how to use superfile!
-
-## Plugins
-
-[Click me to the plugins wiki](https://superfile.dev/list/plugin-list/)
-
-## Themes
-
-[Click me to the theme wiki](https://superfile.dev/configure/custom-theme/)
+1. Open the sidebar and navigate to the SSH section
+2. Add a connection (host, port, username — uses key-based auth)
+3. Browse remote files like a local panel
+4. Copy, cut, paste, delete, extract, and compress files across local and remote panels
 
 ## Hotkeys
 
-> [!WARNING] If you are vim/nvim user please change your default hotkeys config to vim version!
+| Key | Action |
+|---|---|
+| `Cmd+C` | Copy selected file(s) |
+| `Cmd+X` | Cut selected file(s) |
+| `Cmd+V` | Paste from clipboard |
+| `Cmd+Backspace` | Delete selected file(s) |
+| `Space` | Toggle multi-select in file panel |
+| `?` / `Cmd+/` | Toggle help menu |
 
-[**Click me to see the hotkey wiki**](https://superfile.dev/configure/custom-hotkeys/)
+See the [upstream hotkey docs](https://superfile.dev/configure/custom-hotkeys/) for the full reference.
 
-## Notes
+## Supported systems
 
-We have an auto update functionality, that fetches superfile's latest released version from github (if last timestamp of last version check was less than 24 hours) and prints a prompt to user, if there is a newer version available.
+- **macOS** (primary target)
+- **Linux**
+- **Windows** (not fully supported yet)
 
-You can turn this off, by setting `auto_check_update` to false in superfile config. [**Click me to see the config wiki**](https://superfile.dev/configure/superfile-config/)
+## Config
 
-## Troubleshooting
-
-[**Click me to see common problem fix**](https://superfile.dev/troubleshooting/)
-
-## Uninstalling
-
-### macOS and Linux
-
-```bash
-bash -c "$(curl -sLo- https://superfile.dev/uninstall.sh)"
+```
+~/Library/Application Support/superfile/config.toml
 ```
 
-If you want to inspect the script, see : [uninstall.sh](./website/public/uninstall.sh)
+Or wherever `$XDG_CONFIG_HOME/superfile/config.toml` resolves on your system.
 
-### Window
+Run `spf --fix-config-file` to regenerate the config with default values.
 
-To uninstall superfile on Windows, use this powershell script.
+## Credits
 
-```powershell
-powershell -ExecutionPolicy Bypass -Command "Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://superfile.dev/uninstall.ps1'))"
-```
+This fork is based on [superfile](https://github.com/yorukot/superfile) by [yorukot](https://github.com/yorukot). All credit for the original design, architecture, and most of the code goes to the upstream maintainers and contributors.
 
-## Contributing
-
-If you want to contribute please follow the [contribution guide](./CONTRIBUTING.md)
-
-[**Click me to see changelog**](https://superfile.dev/changelog)
-
-## Thanks
-
-### Support
-
-- a Star on my GitHub repository would be nice 🌟
-- You can buy a coffee for me 💖
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G1JEGGC)
-
-### Core maintainer
-
-> We welcome anyone who wants to become a core maintainer. Feel free to reach out!
-
-- **[@yorukot](https://github.com/yorukot)** - Original author and maintainer
-- **[@lazysegtree](https://github.com/lazysegtree)** - Core maintainer
-
-### Contributors
-
-**Thanks to all the contributors for making this project even greater!**
-
-<a href="https://github.com/yorukot/superfile/graphs/contributors">
-  <img src="https://gthanks.yorukot.me/image?target=yorukot%2Fsuperfile" />
-</a>
-
-### Powered by
-
-<a href="https://jb.gg/OpenSource"><img alt="JetBrains logo" align="right" width="200" src="https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg"></a>
-
-Thanks to JetBrains team for providing open-source licenses to support the maintenance of superfile.
-
-### Star History
-
-**THANKS FOR All OF YOUR STARS!** Your stars are my motivation to keep updating!
-
-<a href="https://star-history.com/#yorukot/superfile&Timeline">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=yorukot/superfile&type=Timeline&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=yorukot/superfile&type=Timeline" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=yorukot/superfile&type=Timeline" />
- </picture>
-</a>
-
-<div align="center">
-
-## ༼ つ ◕_◕ ༽つ Please share.
-
-</div>
+Upstream links:
+- [yorukot/superfile](https://github.com/yorukot/superfile)
+- [superfile.dev](https://superfile.dev/)
