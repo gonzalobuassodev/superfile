@@ -29,7 +29,7 @@ if command -v go >/dev/null 2>&1; then
 
   git clone --depth 1 "https://github.com/${REPO}.git" "$BUILD_DIR/superfile"
   cd "$BUILD_DIR/superfile"
-  go build -o "$BIN_DIR/$BINARY" .
+  go build -tags embed -o "$BIN_DIR/$BINARY" .
   ok "Binary installed to $BIN_DIR/$BINARY"
 else
   err "Go is not installed. Install Go first: https://go.dev/dl/"
