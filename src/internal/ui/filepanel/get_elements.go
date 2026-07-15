@@ -222,4 +222,3 @@ func (m *Model) getElements(displayDotFile bool) []Element {
 	}
 	return m.getDirectoryElements(displayDotFile)
 }
-

@@ -48,6 +48,7 @@ func TestClipboardRender_Empty(t *testing.T) {
 		m.SetItems([]string{items[0]})
 		out := ansi.Strip(m.Render())
 		assert.NotContains(t, out, common.ClipboardNoneText)
+		assert.Contains(t, out, " Copy")
 		assert.Contains(t, out, items[0])
 		assert.NotContains(t, out, items[1])
 	})
@@ -57,6 +58,7 @@ func TestClipboardRender_Empty(t *testing.T) {
 		m.SetItems(items)
 		out := ansi.Strip(m.Render())
 		assert.NotContains(t, out, common.ClipboardNoneText)
+		assert.Contains(t, out, " Copy")
 		assert.Contains(t, out, items[0])
 		assert.Contains(t, out, items[1])
 		for i := 2; i < 5; i++ {
@@ -69,10 +71,12 @@ func TestClipboardRender_Empty(t *testing.T) {
 		m.SetItems(items)
 		out := ansi.Strip(m.Render())
 		assert.NotContains(t, out, common.ClipboardNoneText)
-		for i := range 3 {
-			assert.Contains(t, out, items[i])
-		}
-		assert.Contains(t, out, "2 items left....", "expected overflow indicator in render")
+		assert.Contains(t, out, " Copy")
+		// The operation header takes one row, so only 2 items fit before overflow
+		assert.Contains(t, out, items[0])
+		assert.Contains(t, out, items[1])
+		assert.NotContains(t, out, items[2])
+		assert.Contains(t, out, "3 items left....", "expected overflow indicator in render")
 	})
 }
 

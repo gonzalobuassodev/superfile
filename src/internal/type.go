@@ -21,8 +21,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 
 	"github.com/yorukot/superfile/src/internal/ui/prompt"
-	"github.com/yorukot/superfile/src/pkg/backend"
 	zoxideui "github.com/yorukot/superfile/src/internal/ui/zoxide"
+	"github.com/yorukot/superfile/src/pkg/backend"
 )
 
 // Type representing the type of focused panel

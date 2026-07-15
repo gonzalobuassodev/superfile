@@ -13,7 +13,7 @@ type fileInfoDirEntry struct {
 	fi os.FileInfo
 }
 
-func (e *fileInfoDirEntry) Name() string              { return e.fi.Name() }
+func (e *fileInfoDirEntry) Name() string               { return e.fi.Name() }
 func (e *fileInfoDirEntry) IsDir() bool                { return e.fi.IsDir() }
 func (e *fileInfoDirEntry) Type() os.FileMode          { return e.fi.Mode().Type() }
 func (e *fileInfoDirEntry) Info() (os.FileInfo, error) { return e.fi, nil }

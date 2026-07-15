@@ -9,8 +9,8 @@ const (
 	defaultCacheExpiration       = 5 * time.Minute
 
 	// Image processing
-	rgbShift16        = 16 // Bit shift for red channel in RGB operations
-	rgbShift8         = 8  // Bit shift for green channel in RGB operations
+	rgbShift16 = 16 // Bit shift for red channel in RGB operations
+	rgbShift8  = 8  // Bit shift for green channel in RGB operations
 
 	// Kitty protocol
 	kittyHashSeed      = 42     // Seed for kitty image ID hashing

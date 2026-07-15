@@ -303,12 +303,13 @@ func (m *model) getPasteItemCmd() tea.Cmd {
 	cut := false
 	var sourceFS backend.FileSystem
 
-	// Check internal clipboard first for remote items
-	sourceFS = m.clipboard.GetSourceFS()
-	if sourceFS != nil && !m.clipboard.IsEmpty() {
-		// Remote items: use internal clipboard directly (no OS clipboard)
+	// Use internal clipboard when available (preserves cut flag for
+	// both local and remote items). Fall back to OS clipboard only
+	// when internal is empty (e.g. paste from Finder).
+	if !m.clipboard.IsEmpty() {
 		copyItems = m.clipboard.PruneInaccessibleItemsAndGet()
 		cut = m.clipboard.IsCut()
+		sourceFS = m.clipboard.GetSourceFS()
 	} else if m.osClipboard != nil {
 		// Local items: read from OS clipboard
 		osItems, err := m.osClipboard.ReadFileURIs()

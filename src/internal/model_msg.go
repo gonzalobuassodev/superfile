@@ -95,6 +95,9 @@ func (m PasteOperationMsg) ApplyToModel(model *model) tea.Cmd {
 	if m.State == processbar.Successful {
 		panel.LastLoadedLocation = ""
 		panel.LastTimeGetElement = time.Time{}
+		if model.clipboard.IsCut() {
+			model.clipboard.Reset(false)
+		}
 	}
 	return processCmdToTeaCmd(model.processBarModel.GetListenCmd())
 }
@@ -156,8 +159,8 @@ func (m NotifyModalUpdateMsg) ApplyToModel(model *model) tea.Cmd {
 
 // MetadataUpdateMsg is sent when metadata has been fetched for a file.
 type MetadataUpdateMsg struct {
-	Meta     metadata.Metadata
-	Focused  bool
+	Meta    metadata.Metadata
+	Focused bool
 	BaseMessage
 }
 

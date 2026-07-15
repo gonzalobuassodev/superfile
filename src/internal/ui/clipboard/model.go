@@ -50,8 +50,15 @@ func (m *Model) Render() string {
 		// TODO move this to a string
 		r.AddLines("", common.ClipboardNoneText)
 	} else {
-		for i := 0; i < len(m.items.items) && i < viewHeight; i++ {
-			if i == viewHeight-1 && i != len(m.items.items)-1 {
+		// Show operation type header (cuts available item rows by 1)
+		opLabel := " Copy"
+		if m.items.cut {
+			opLabel = " Cut"
+		}
+		r.AddLines(opLabel)
+		itemRows := viewHeight - 1
+		for i := 0; i < len(m.items.items) && i < itemRows; i++ {
+			if i == itemRows-1 && i != len(m.items.items)-1 {
 				// Last Entry we can render, but there are more that one left
 				r.AddLines(strconv.Itoa(len(m.items.items)-i) + " items left....")
 			} else {

@@ -11,8 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
-
 // verifyFileSystemContract runs a common set of assertions against any
 // FileSystem implementation. Local and remote implementations must both
 // satisfy this contract.
