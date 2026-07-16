@@ -83,6 +83,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		inputCmd = m.handleKeyInput(msg)
 
+	case tea.PasteMsg:
+		// When pasting in file panel mode and internal clipboard has items,
+		// treat it as file paste instead of inserting text into the panel
+		if !m.typingModal.open &&
+			!m.promptModal.IsOpen() &&
+			!m.getFocusedFilePanel().SearchBar.Focused() &&
+			!m.fileModel.Renaming &&
+			!m.clipboard.IsEmpty() &&
+			m.focusPanel == nonePanelFocus {
+			inputCmd = m.getPasteItemCmd()
+		}
+
 	// Has to handle zoxide messages separately as they could be generated via
 	// zoxide update commands, or batched commands from textinput
 	// Cannot do it like processbar messages
