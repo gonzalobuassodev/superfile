@@ -20,9 +20,9 @@ esac
 BIN_DIR="${HOME}/.local/bin"
 mkdir -p "$BIN_DIR"
 
-# ── build or download ────────────────────────────────────────────────────
+# ── build ────────────────────────────────────────────────────────────────
 if command -v go >/dev/null 2>&1; then
-  info "Building superfile from source (requires Go)..."
+  info "Building superfile from source..."
 
   BUILD_DIR=$(mktemp -d)
   trap 'rm -rf "$BUILD_DIR"' EXIT
@@ -73,24 +73,35 @@ else
   info "Install fish and run: fish scripts/install-macos.fish"
 fi
 
-# ── ghostty config ─────────────────────────────────────────────────────
+# ── ghostty config (fork) ──────────────────────────────────────────────
+# NOTE: cmd+v is NOT bound here — it uses Ghostty's default
+# paste_from_clipboard. Superfile's fork handles paste via tea.PasteMsg
+# and checks its internal clipboard for file paste.
 if [ -f "${HOME}/.config/ghostty/config" ]; then
-  if ! grep -q "cmd+x=text:\\\\x18" "${HOME}/.config/ghostty/config" 2>/dev/null; then
-    info "Adding Cmd+X passthrough to Ghostty config..."
+  needs_append=false
+  grep -q "cmd+c=text:\\\\x03" "${HOME}/.config/ghostty/config" 2>/dev/null || needs_append=true
+
+  if [ "$needs_append" = true ]; then
+    info "Adding Superfile Cmd shortcuts to Ghostty config..."
     cat >> "${HOME}/.config/ghostty/config" << 'GHOSTTY'
 
-# Superfile: Cmd macOS shortcuts para copy/paste/delete
+# Superfile: Cmd shortcuts macOS. cmd+v uses Ghostty default paste_from_clipboard
 keybind = cmd+c=text:\x03
-keybind = cmd+v=text:\x16
 keybind = cmd+x=text:\x18
 keybind = cmd+backspace=text:\x04
 GHOSTTY
     ok "Added Ghostty keybindings for superfile"
   else
-    ok "Ghostty already has Cmd+X passthrough"
+    ok "Ghostty already has Superfile keybindings"
   fi
+else
+  info "Ghostty config not found — skipping."
+  info "Manually add these to ~/.config/ghostty/config:"
+  info "  keybind = cmd+c=text:\\x03"
+  info "  keybind = cmd+x=text:\\x18"
+  info "  keybind = cmd+backspace=text:\\x04"
 fi
 
 printf "\n\033[32m✅ Done!\033[0m Open a new terminal and run \033[1ms\033[0m to start superfile.\n"
 printf "   Press \033[1mq\033[0m to quit and cd to the last browsed directory.\n"
-printf "\033[90m   Restart Ghostty if Cmd+C/V don't work (close & reopen terminal).\033[0m\n"
+printf "\033[90m   Make sure Ghostty uses cmd+v=paste_from_clipboard (default).\033[0m\n"
