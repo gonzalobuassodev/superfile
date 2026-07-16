@@ -73,6 +73,29 @@ else
   info "Install fish and run: fish scripts/install-macos.fish"
 fi
 
+# ── herdr config: kitty graphics passthrough ──────────────────────────
+# Herdr needs kitty_graphics=true so Kitty protocol (used by superfile
+# image preview) passes through the multiplexer to Ghostty.
+if command -v herdr >/dev/null 2>&1; then
+  HERDR_CONFIG="${HOME}/.config/herdr/config.toml"
+  if [ -f "$HERDR_CONFIG" ]; then
+    if grep -q "kitty_graphics" "$HERDR_CONFIG" 2>/dev/null; then
+      ok "Herdr already has kitty_graphics configured"
+    else
+      info "Enabling kitty_graphics in Herdr config..."
+      # Add [experimental] section with kitty_graphics = true
+      printf '\n[experimental]\nkitty_graphics = true\n' >> "$HERDR_CONFIG"
+      ok "Added kitty_graphics = true to Herdr config"
+      info "Restart Herdr (or your Herdr session) for the change to take effect"
+    fi
+  else
+    info "Herdr config not found at $HERDR_CONFIG — skipping."
+    info "Manually add to your Herdr config:"
+    info "  [experimental]"
+    info "  kitty_graphics = true"
+  fi
+fi
+
 # ── ghostty config (fork) ──────────────────────────────────────────────
 # NOTE: cmd+v is NOT bound here — it uses Ghostty's default
 # paste_from_clipboard. Superfile's fork handles paste via tea.PasteMsg
