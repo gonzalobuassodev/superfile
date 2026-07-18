@@ -68,6 +68,7 @@ var (
 	FilePreviewImageConversionErrorText     string
 	FilePreviewBatNotInstalledText          string
 	FilePreviewThumbnailGenerationErrorText string
+	FilePreviewArchiveReadErrorText         string
 
 	CheckboxChecked        string
 	CheckboxCheckedFocused string
@@ -83,7 +84,24 @@ var (
 
 var (
 	UnsupportedPreviewFormats = []string{".torrent"}
-	ImageExtensions           = map[string]bool{
+	ArchiveExtensions         = map[string]bool{
+		".zip": true,
+		".tar": true,
+		".tgz": true,
+		".rar": true,
+		".7z":  true,
+		".jar": true,
+		".war": true,
+		".cbr": true,
+		".cbz": true,
+	}
+	CompoundArchiveExtensions = []string{
+		".tar.gz",
+		".tar.bz2",
+		".tar.xz",
+		".tar.zst",
+	}
+	ImageExtensions = map[string]bool{
 		".jpg":  true,
 		".jpeg": true,
 		".png":  true,
@@ -173,6 +191,8 @@ func LoadPrerenderedVariables() {
 		"'bat' is not installed or not found")
 	FilePreviewThumbnailGenerationErrorText = wrapFilePreviewErrorMsg(
 		"Thumbnail generation failed")
+	FilePreviewArchiveReadErrorText = wrapFilePreviewErrorMsg(
+		"Could not read archive")
 
 	CheckboxChecked = FilePanelSelectBoxStyle.
 		Foreground(FilePanelBorderColor).

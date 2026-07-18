@@ -35,19 +35,22 @@ else
   err "Go is not installed. Install Go first: https://go.dev/dl/"
 fi
 
-# ── system dependencies (pdftoppm, ffmpeg, ghostscript) ────────────────
-# Used by superfile for PDF, video, and PostScript/eps preview thumbnails.
+# ── system dependencies (pdftoppm, ffmpeg, ghostscript, unar) ────────
+# Used by superfile for PDF, video, PostScript/eps preview thumbnails,
+# and archive content preview (zip/tar/rar/7z).
 if ! command -v pdftoppm >/dev/null 2>&1 || \
    ! command -v ffmpeg  >/dev/null 2>&1 || \
-   ! command -v gs      >/dev/null 2>&1; then
+   ! command -v gs      >/dev/null 2>&1 || \
+   ! command -v unar    >/dev/null 2>&1; then
   if command -v brew >/dev/null 2>&1; then
-    info "Installing missing system dependencies (poppler, ffmpeg, ghostscript)..."
-    brew install poppler ffmpeg ghostscript 2>/dev/null || true
+    info "Installing missing system dependencies (poppler, ffmpeg, ghostscript, unar)..."
+    brew install poppler ffmpeg ghostscript unar 2>/dev/null || true
   else
     info "Some preview features may be missing — install these for full support:"
     info "  brew install poppler     # PDF preview (pdftoppm)"
     info "  brew install ffmpeg      # Video thumbnail preview"
     info "  brew install ghostscript # PostScript/EPS preview"
+    info "  brew install unar        # RAR/7z archive preview (zip/tar work natively)"
   fi
 fi
 

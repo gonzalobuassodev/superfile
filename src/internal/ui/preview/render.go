@@ -201,6 +201,10 @@ func (m *Model) RenderWithPath(
 		return renderDirectoryPreview(r, itemPath, contentHeight), kittyClear
 	}
 
+	if isArchiveFile(itemPath) {
+		return renderArchivePreview(r, itemPath, contentHeight), kittyClear
+	}
+
 	if m.thumbnailGenerator != nil && m.thumbnailGenerator.SupportsExt(ext) {
 		thumbnailPath, err := m.thumbnailGenerator.GetThumbnailOrGenerate(itemPath)
 		if err != nil {
