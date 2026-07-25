@@ -2,7 +2,7 @@
 set -e
 
 REPO="gonzalobuassodev/superfile"
-BINARY="spf"
+BINARY="superfile"
 
 # ── helpers ──────────────────────────────────────────────────────────────
 info()  { printf "\033[34m➜\033[0m %s\n" "$1"; }
@@ -61,9 +61,9 @@ if command -v fish >/dev/null 2>&1; then
   FUNC_DIR="${HOME}/.config/fish/functions"
   mkdir -p "$FUNC_DIR"
 
-  cat > "$FUNC_DIR/spf.fish" << 'FISHFUNC'
-function spf --wraps spf --description 'Superfile — pretty fancy terminal file manager. Runs the binary and cds to last browsed dir on quit.'
-    command spf $argv
+  cat > "$FUNC_DIR/superfile.fish" << 'FISHFUNC'
+function superfile --wraps superfile --description 'Superfile — pretty fancy terminal file manager. Runs the binary and cds to last browsed dir on quit.'
+    command superfile $argv
     set -l lastdir_file "$HOME/Library/Application Support/superfile/lastdir"
     if test -f "$lastdir_file"
         set -l cd_cmd (string trim (cat "$lastdir_file"))
@@ -75,17 +75,17 @@ end
 FISHFUNC
   ok "Fish function installed to $FUNC_DIR/spf.fish"
 
-  # ── alias s=spf ──────────────────────────────────────────────────────
+  # ── alias s=superfile ──────────────────────────────────────────────
   CONF="${HOME}/.config/fish/config.fish"
-  if [ -f "$CONF" ] && ! grep -q 'alias s="spf"' "$CONF" 2>/dev/null; then
-    printf '\nalias s="spf"\n' >> "$CONF"
-    ok "Added alias s=\"spf\" to $CONF"
+  if [ -f "$CONF" ] && ! grep -q 'alias s="superfile"' "$CONF" 2>/dev/null; then
+    printf '\nalias s="superfile"\n' >> "$CONF"
+    ok "Added alias s=\"superfile\" to $CONF"
   elif [ ! -f "$CONF" ]; then
     mkdir -p "$(dirname "$CONF")"
-    printf 'alias s="spf"\n' > "$CONF"
-    ok "Created $CONF with alias s=\"spf\""
+    printf 'alias s="superfile"\n' > "$CONF"
+    ok "Created $CONF with alias s=\"superfile\""
   else
-    ok "Alias s=\"spf\" already exists in $CONF"
+    ok "Alias s=\"superfile\" already exists in $CONF"
   fi
 else
   info "Fish shell not detected — skipping fish integration."

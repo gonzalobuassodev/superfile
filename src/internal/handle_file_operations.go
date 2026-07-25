@@ -199,8 +199,51 @@ func makeDeleteProcessor(process processbar.Process,
 		} else if fs != nil && !fs.IsLocal() {
 			deleteFunc = fs.RemoveAll
 		}
+
+		isRemote := fs != nil && !fs.IsLocal() && !useTrash
+
+		// For remote delete: count total files across all items so the
+		// progress bar shows per-file progress instead of jumping 0→1.
+		if isRemote {
+			totalFiles := 0
+			for _, item := range items {
+				info, statErr := fs.Stat(item)
+				if statErr != nil {
+					slog.Error("Error stating remote item for delete count", "item", item, "error", statErr)
+					continue
+				}
+				if info.IsDir() {
+					_ = fs.Walk(item, func(path string, info os.FileInfo, err error) error {
+						if err != nil {
+							return err
+						}
+						if !info.IsDir() {
+							totalFiles++
+						}
+						return nil
+					})
+				} else {
+					totalFiles++
+				}
+			}
+			process.Total = totalFiles
+			processBarModel.TrySendingUpdateProcessMsg(process)
+		}
+
 		for i, item := range items {
-			err := deleteFunc(item)
+			var err error
+			if isRemote {
+				pLocal := &process
+				progressCb := func(tp backend.TransferProgress) {
+					pLocal.CurrentFile = tp.FileName
+					pLocal.Done++
+					processBarModel.TrySendingUpdateProcessMsg(*pLocal)
+				}
+				err = backend.DeleteRemoteWithProgress(fs, item, progressCb)
+			} else {
+				err = deleteFunc(item)
+			}
+
 			if err != nil {
 				process.State = processbar.Failed
 				slog.Error("Error in delete operation", "item", item, "useTrash", useTrash, "error", err)
@@ -208,9 +251,12 @@ func makeDeleteProcessor(process processbar.Process,
 				notProcessed = items[i:]
 				break
 			}
-			process.CurrentFile = filepath.Base(item)
-			process.Done++
-			processBarModel.TrySendingUpdateProcessMsg(process)
+
+			if !isRemote {
+				process.CurrentFile = filepath.Base(item)
+				process.Done++
+				processBarModel.TrySendingUpdateProcessMsg(process)
+			}
 		}
 
 		if process.State != processbar.Failed {

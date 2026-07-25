@@ -236,9 +236,29 @@ func remotePasteDir(sourceFS, targetFS backend.FileSystem, src, dst string,
 	p *processbar.Process, cut bool, processBarModel *processbar.Model) error {
 	dst = renameIfDuplicateLocal(dst)
 
+	// Build progress callback that updates the process bar.
+	// Fires every ~100ms per file so the user sees byte/MB progress
+	// tick up continuously. Done++ fires exactly once per completed file
+	// (the ProgressReader deduplicates the final callback).
+	progressCb := func(tp backend.TransferProgress) {
+		if tp.TotalBytes > 0 {
+			copied := backend.FormatTransferSize(tp.BytesCopied)
+			total := backend.FormatTransferSize(tp.TotalBytes)
+			p.CurrentFile = fmt.Sprintf("%s (%s/%s)", tp.FileName, copied, total)
+			if tp.BytesCopied >= tp.TotalBytes {
+				p.Done++
+			}
+		} else {
+			// Empty file — mark it done immediately
+			p.CurrentFile = tp.FileName
+			p.Done++
+		}
+		processBarModel.TrySendingUpdateProcessMsg(*p)
+	}
+
 	if sourceFS == nil && targetFS != nil {
 		// Local → Remote (upload)
-		if err := backend.Upload(targetFS, src, dst); err != nil {
+		if err := backend.UploadWithProgress(targetFS, src, dst, progressCb); err != nil {
 			return err
 		}
 		if cut {
@@ -251,7 +271,7 @@ func remotePasteDir(sourceFS, targetFS backend.FileSystem, src, dst string,
 
 	if sourceFS != nil && targetFS == nil {
 		// Remote → Local (download)
-		if err := backend.Download(sourceFS, src, dst); err != nil {
+		if err := backend.DownloadWithProgress(sourceFS, src, dst, progressCb); err != nil {
 			return err
 		}
 		if cut {
@@ -269,7 +289,7 @@ func remotePasteDir(sourceFS, targetFS backend.FileSystem, src, dst string,
 		}
 		return nil
 	}
-	if err := backend.RemoteCopy(sourceFS, targetFS, src, dst); err != nil {
+	if err := backend.RemoteCopyWithProgress(sourceFS, targetFS, src, dst, progressCb); err != nil {
 		return err
 	}
 	if cut {
