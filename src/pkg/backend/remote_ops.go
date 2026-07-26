@@ -217,6 +217,18 @@ func downloadFile(sourceFS FileSystem, remotePath, localDest string, info os.Fil
 	}
 	defer localFile.Close()
 
+	// Track whether the download succeeded so we can clean up the partial
+	// file on failure (e.g. dropped SSH connection after sleep/wake).
+	var downloadOK bool
+	defer func() {
+		if !downloadOK {
+			if removeErr := os.Remove(localDest); removeErr != nil && !os.IsNotExist(removeErr) {
+				slog.Warn("Failed to remove partial download file",
+					"path", localDest, "error", removeErr)
+			}
+		}
+	}()
+
 	progressCh := make(chan struct{}, 64)
 
 	var reader io.Reader = remoteFile
@@ -269,6 +281,7 @@ case err := <-errCh:
 		return fmt.Errorf("failed to copy remote file %s to %s: %w", remotePath, localDest, err)
 	}
 	cancel()
+	downloadOK = true
 	slog.Debug("downloadFile completed successfully",
 		"path", remotePath, "size", info.Size())
 	return nil

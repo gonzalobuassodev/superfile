@@ -241,6 +241,8 @@ func sshQuote(path string) string {
 }
 
 // dialSFTP creates an SSH connection and returns both the SSH and SFTP clients.
+// It also starts a background keepalive goroutine that detects dropped
+// connections (e.g. after sleep/wake) within 15-45 seconds.
 func dialSFTP(host string, port int, config *ssh.ClientConfig) (*sftp.Client, *ssh.Client, error) {
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	slog.Debug("Dialing SSH", "addr", addr, "user", config.User)
@@ -256,7 +258,55 @@ func dialSFTP(host string, port int, config *ssh.ClientConfig) (*sftp.Client, *s
 		return nil, nil, fmt.Errorf("SFTP client creation failed: %w", err)
 	}
 
+	// Start a background keepalive goroutine that periodically sends a
+	// keepalive@openssh.com request. If the connection drops (e.g. machine
+	// sleep/wake), the keepalive fails and both clients are torn down so
+	// any blocked io.Copy unblocks quickly instead of hanging indefinitely.
+	go keepaliveSFTP(sshClient, sftpClient)
+
 	return sftpClient, sshClient, nil
+}
+
+// keepaliveInterval is how often we send SSH keepalive pings.
+const keepaliveInterval = 15 * time.Second
+
+// keepaliveTimeout is how long we wait for a keepalive response before giving up.
+const keepaliveTimeout = 10 * time.Second
+
+// keepaliveSFTP sends periodic keepalive requests over the SSH connection.
+// If a keepalive fails (dead connection after sleep/wake, network drop, etc.),
+// it closes both the SSH and SFTP clients so that any blocked I/O operations
+// unblock with an error rather than hanging indefinitely.
+func keepaliveSFTP(sshClient *ssh.Client, sftpClient *sftp.Client) {
+	ticker := time.NewTicker(keepaliveInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		// Keepalive with a short reply timeout via a goroutine so we don't
+		// block the ticker if the connection is truly dead.
+		done := make(chan struct{}, 1)
+		go func() {
+			_, _, err := sshClient.SendRequest("keepalive@openssh.com", true, nil)
+			if err != nil {
+				slog.Warn("SSH keepalive failed — closing connection",
+					"error", err)
+				sftpClient.Close()
+				sshClient.Close()
+				return
+			}
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Keepalive succeeded, continue.
+		case <-time.After(keepaliveTimeout):
+			slog.Warn("SSH keepalive timed out — closing connection")
+			sftpClient.Close()
+			sshClient.Close()
+			return
+		}
+	}
 }
 
 // HostKeyCallbackWithKnownHosts creates an ssh.HostKeyCallback that validates
