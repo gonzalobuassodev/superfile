@@ -214,9 +214,19 @@ func readTarViaExternalDecompressor(path string, cmdName string, args ...string)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("starting %s: %w", cmdName, err)
 	}
-	defer cmd.Wait() //nolint:errcheck
 
-	return readTarEntries(stdout)
+	entries, err := readTarEntries(stdout)
+	if err != nil {
+		// Ignore Wait error: read error is the one to surface
+		_ = cmd.Wait()
+		return nil, err
+	}
+
+	if waitErr := cmd.Wait(); waitErr != nil {
+		return nil, fmt.Errorf("%s decompression failed: %w", cmdName, waitErr)
+	}
+
+	return entries, nil
 }
 
 // readTarEntries reads tar entries from a reader
@@ -273,85 +283,82 @@ func readArchiveViaExternal(path string) ([]archiveEntry, error) {
 	return nil, fmt.Errorf("no external tool available to list archive: %s", path)
 }
 
-// readViaLsar uses the `lsar` command to list archive contents
+// readViaLsar uses the `lsar` command to list archive contents.
+// The default output format is:
+//
+//	archive.zip: Zip
+//	file1.txt
+//	dir/
+//	dir/file2.txt
+//
+// Directories end with '/'.
 func readViaLsar(path string) ([]archiveEntry, error) {
-	cmd := exec.Command("lsar", "-j", path)
+	cmd := exec.Command("lsar", path)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("lsar failed: %w", err)
 	}
 
-	// lsar -j outputs JSON; we parse it simply by looking for filename fields
-	// Skip JSON parsing complexity — parse lines that look like path entries
-	lines := strings.Split(string(output), "\n")
-	var entries []archiveEntry
+	raw := strings.TrimSpace(string(output))
+	if raw == "" {
+		return nil, fmt.Errorf("lsar returned empty output")
+	}
 
-	for _, line := range lines {
+	lines := strings.Split(raw, "\n")
+	entries := make([]archiveEntry, 0, len(lines)-1)
+
+	for i, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "{") || strings.HasPrefix(line, "}") ||
-			strings.HasPrefix(line, "[") || strings.HasPrefix(line, "]") ||
-			strings.Contains(line, "\"pathname\"") || strings.Contains(line, "\"container\"") {
+		if i == 0 || line == "" {
+			// First line is always the header (archive.zip: Description).
 			continue
 		}
-		// Simple heuristic: lines with quoted strings that look like paths
-		if strings.HasPrefix(line, "\"") && strings.HasSuffix(line, "\",") {
-			name := strings.TrimSuffix(strings.TrimPrefix(line, "\""), "\",")
-			name = filepath.Clean(name)
-			if name == "." {
-				continue
-			}
-			entries = append(entries, archiveEntry{
-				name:  name,
-				isDir: strings.HasSuffix(name, "/"),
-			})
+		name := filepath.Clean(line)
+		if name == "." {
+			continue
 		}
+		entries = append(entries, archiveEntry{
+			name:  name,
+			isDir: strings.HasSuffix(line, "/"),
+		})
 	}
 
 	if len(entries) == 0 {
-		return nil, fmt.Errorf("lsar returned no parseable entries")
+		return nil, fmt.Errorf("lsar returned no entries")
 	}
 
 	return entries, nil
 }
 
-// readViaUnrar uses the `unrar` command to list rar contents
+// readViaUnrar uses the `unrar` command to list rar contents in bare mode.
+// `unrar lb` outputs one path per line; directories end with '/'.
 func readViaUnrar(path string) ([]archiveEntry, error) {
-	cmd := exec.Command("unrar", "lt", path)
+	cmd := exec.Command("unrar", "lb", path)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("unrar failed: %w", err)
 	}
 
-	// unrar lt outputs lines like:
-	//   filename.ext           size  date
-	var entries []archiveEntry
-	lines := strings.Split(string(output), "\n")
-	inFileList := false
+	raw := strings.TrimSpace(string(output))
+	if raw == "" {
+		return nil, fmt.Errorf("unrar returned empty output")
+	}
+
+	lines := strings.Split(raw, "\n")
+	entries := make([]archiveEntry, 0, len(lines))
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.Contains(line, "-----------") {
-			inFileList = !inFileList
+		if line == "" {
 			continue
 		}
-		if !inFileList || line == "" {
+		name := filepath.Clean(line)
+		if name == "." {
 			continue
 		}
-
-		// Skip attribute/summary lines
-		if strings.HasPrefix(line, "Attributes") || strings.HasPrefix(line, "---") {
-			continue
-		}
-
-		// Try to parse: name might have size trailing
-		// unrar lt format varies; just take what looks like a path
-		name := strings.TrimSpace(line)
-		if name == "" || strings.Contains(name, "Pathname") || strings.Contains(name, "Total") {
-			continue
-		}
-
 		entries = append(entries, archiveEntry{
-			name: name,
+			name:  name,
+			isDir: strings.HasSuffix(line, "/"),
 		})
 	}
 

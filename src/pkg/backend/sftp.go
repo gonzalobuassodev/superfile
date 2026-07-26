@@ -2,27 +2,53 @@ package backend
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
 )
+
+// SudoPasswordProvider is a callback that supplies a sudo password when
+// OpenAsRoot detects that the remote sudo requires authentication.
+// hostInfo is a human-readable identifier (e.g., "myserver" or "user@host:port").
+// Returns the password and true if the user provided one, or ("", false) if cancelled.
+type SudoPasswordProvider func(hostInfo string) (password string, ok bool)
 
 // sftpFS implements FileSystem over an SFTP client connection.
 type sftpFS struct {
-	client *sftp.Client
-	name   string // display name for this connection
+	client               *sftp.Client
+	sshClient            *ssh.Client
+	name                 string // display name for this connection
+	sudoPasswordProvider SudoPasswordProvider
 }
 
 // NewSFTPFileSystem creates a new SFTP-backed FileSystem from an existing
 // *sftp.Client. The name parameter is a human-readable identifier shown in
 // the UI (e.g., the connection name from config).
+// NOTE: The returned FileSystem does not carry an SSH client, so OpenAsRoot
+// will not be available. Use NewSFTPFileSystemWithSSH when sudo support is needed.
 func NewSFTPFileSystem(client *sftp.Client, name string) FileSystem {
 	return &sftpFS{
 		client: client,
 		name:   name,
+	}
+}
+
+// NewSFTPFileSystemWithSSH creates a new SFTP-backed FileSystem that also
+// holds the underlying SSH client, enabling privileged operations such as
+// sudo cat via OpenAsRoot.
+func NewSFTPFileSystemWithSSH(client *sftp.Client, sshClient *ssh.Client, name string) FileSystem {
+	return &sftpFS{
+		client:    client,
+		sshClient: sshClient,
+		name:      name,
 	}
 }
 
@@ -135,6 +161,157 @@ func (fs *sftpFS) Walk(root string, walkFn filepath.WalkFunc) error {
 		}
 	}
 	return nil
+}
+
+// sudoReadCloser reads from an SSH session's stdout and cleans up the
+// session on Close. It waits for the remote command to complete on EOF
+// so that any non-zero exit is surfaced as an error.
+type sudoReadCloser struct {
+	session  *ssh.Session
+	reader   io.Reader
+	closeErr error
+	once     sync.Once
+}
+
+func (rc *sudoReadCloser) Read(p []byte) (int, error) {
+	n, err := rc.reader.Read(p)
+	if err == io.EOF {
+		rc.closeErr = rc.session.Wait()
+		if rc.closeErr != nil {
+			return n, fmt.Errorf("sudo cat failed: %w", rc.closeErr)
+		}
+	}
+	return n, err
+}
+
+func (rc *sudoReadCloser) Close() error {
+	rc.once.Do(func() {
+		if rc.closeErr == nil {
+			slog.Debug("sudoReadCloser.Close: waiting for session")
+			waitDone := make(chan error, 1)
+			go func() {
+				waitDone <- rc.session.Wait()
+			}()
+			select {
+			case err := <-waitDone:
+				rc.closeErr = err
+				slog.Debug("sudoReadCloser.Close: session.Wait completed")
+			case <-time.After(3 * time.Second):
+				slog.Warn("sudoReadCloser.Close: session.Wait timed out, force-closing")
+				rc.closeErr = errors.New("sudo cat session timed out")
+			}
+		}
+		slog.Debug("sudoReadCloser.Close: closing session")
+		rc.session.Close()
+	})
+	return rc.closeErr
+}
+
+// SetSudoPasswordProvider sets a callback that will be invoked when
+// OpenAsRoot detects that the remote sudo requires a password.
+func (fs *sftpFS) SetSudoPasswordProvider(provider SudoPasswordProvider) {
+	fs.sudoPasswordProvider = provider
+}
+
+// sudoCheckNopasswd checks if the remote user has NOPASSWD sudo configured
+// by running sudo -n true (non-interactive, no data transferred).
+// Returns true if sudo is usable without a password.
+func sudoCheckNopasswd(sess *ssh.Session) bool {
+	err := sess.Run("sudo -n true 2>/dev/null")
+	return err == nil
+}
+
+// OpenAsRoot opens the file at path for reading using sudo cat over SSH.
+// This is used when a standard sftp.Open fails with permission denied.
+// It requires the sftpFS to have been created with NewSFTPFileSystemWithSSH.
+//
+// It first checks with sudo -n true (lightweight, no file data) whether
+// NOPASSWD is available. If yes, uses streaming sudo cat. If not, calls the
+// SudoPasswordProvider and retries with sudo -S (streaming, no memory buffer).
+func (fs *sftpFS) OpenAsRoot(path string) (io.ReadCloser, error) {
+	if fs.sshClient == nil {
+		return nil, errors.New("sftpFS: no SSH client available for sudo")
+	}
+
+	// Lightweight check: sudo -n true — no file data, fast round trip.
+	checkSess, err := fs.sshClient.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	nopasswd := sudoCheckNopasswd(checkSess)
+	checkSess.Close()
+
+	if nopasswd {
+		return fs.sudoCat(path)
+	}
+
+	// Sudo requires a password — ask via the provider.
+	if fs.sudoPasswordProvider == nil {
+		return nil, errors.New("sudo password required but no password provider " +
+			"configured; set a SudoPasswordProvider on the SFTP filesystem, " +
+			"or configure NOPASSWD sudo for the remote user")
+	}
+
+	password, ok := fs.sudoPasswordProvider(fs.name)
+	if !ok {
+		return nil, errors.New("sudo password prompt cancelled by user")
+	}
+
+	return fs.sudoCatWithPassword(path, password)
+}
+
+// sudoCat runs sudo cat <path> with streaming (no password required).
+// Always uses streaming so large files are not buffered in memory.
+func (fs *sftpFS) sudoCat(path string) (io.ReadCloser, error) {
+	sess, err := fs.sshClient.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH session for sudo cat: %w", err)
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		sess.Close()
+		return nil, fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+	if err := sess.Start("sudo cat " + sshQuote(path)); err != nil {
+		sess.Close()
+		return nil, fmt.Errorf("failed to exec sudo cat: %w", err)
+	}
+	return &sudoReadCloser{session: sess, reader: stdout}, nil
+}
+
+// sudoCatWithPassword runs sudo -S cat <path>, sending the password to stdin.
+// Returns a streaming ReadCloser so large files are not buffered in memory.
+func (fs *sftpFS) sudoCatWithPassword(path, password string) (io.ReadCloser, error) {
+	sess, err := fs.sshClient.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSH session for password sudo: %w", err)
+	}
+
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		sess.Close()
+		return nil, fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		sess.Close()
+		return nil, fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	if err := sess.Start("sudo -S cat " + sshQuote(path)); err != nil {
+		sess.Close()
+		return nil, fmt.Errorf("failed to exec sudo -S cat: %w", err)
+	}
+
+	// Send the password followed by newline to sudo's stdin prompt
+	if _, err := fmt.Fprintf(stdin, "%s\n", password); err != nil {
+		sess.Close()
+		return nil, fmt.Errorf("failed to send sudo password: %w", err)
+	}
+	stdin.Close()
+
+	return &sudoReadCloser{session: sess, reader: stdout}, nil
 }
 
 func (fs *sftpFS) Close() error {

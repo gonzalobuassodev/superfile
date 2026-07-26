@@ -2,11 +2,17 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
+
+	"github.com/pkg/sftp"
 )
 
 // TransferProgress carries the current state of an in-progress file transfer.
@@ -24,8 +30,45 @@ type ProgressCallback func(TransferProgress)
 // to avoid flooding the channel while still showing smooth byte-level updates.
 const (
 	defaultProgressInterval = 100 * time.Millisecond
-	defaultStallTimeout     = 60 * time.Second
+	defaultStallTimeout     = 15 * time.Second
 )
+
+// PermissionDeniedWithSudoError is returned when a remote file cannot be opened
+// due to permission denied, and the filesystem supports retrying with sudo.
+// The caller can use RootFS to retry the read via OpenAsRoot.
+type PermissionDeniedWithSudoError struct {
+	Path      string
+	Wrapped   error
+	RootFS    RootFileSystem
+	LocalDest string
+	Info      os.FileInfo
+}
+
+func (e *PermissionDeniedWithSudoError) Error() string {
+	return fmt.Sprintf("permission denied: %s", e.Path)
+}
+
+func (e *PermissionDeniedWithSudoError) Unwrap() error {
+	return e.Wrapped
+}
+
+// isPermissionDenied returns true if the error indicates a permission denied
+// condition, either from the OS, SFTP protocol, or the error message.
+func isPermissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsPermission(err) {
+		return true
+	}
+	// Check for SFTP status code 3 (SSH_FX_PERMISSION_DENIED)
+	var se *sftp.StatusError
+	if errors.As(err, &se) && se.Code == 3 {
+		return true
+	}
+	// Fallback: check error string
+	return strings.Contains(strings.ToLower(err.Error()), "permission denied")
+}
 
 // FormatTransferSize converts a byte count to a human-readable string (B/KB/MB/GB).
 func FormatTransferSize(bytes int64) string {
@@ -44,21 +87,42 @@ func FormatTransferSize(bytes int64) string {
 // ProgressReader wraps an io.Reader and reports progress via a callback.
 // Reports at most once per minInterval so transfers feel smooth without flooding.
 // When stallCh is non-nil, it sends a signal on every read to reset a stall timer.
+// Thread-safe via internal mutex.
 type ProgressReader struct {
-	reader       io.Reader
-	total        int64
-	copied       int64
-	callback     ProgressCallback
-	fileName     string
-	lastReport   time.Time
-	minInterval  time.Duration
-	firedDone    bool
-	stallCh      chan<- struct{}
+	mu         sync.Mutex
+	reader     io.Reader
+	total      int64
+	callback   ProgressCallback
+	fileName   string
+	minInterval time.Duration
+	stallCh    chan<- struct{}
+
+	// mutable state protected by mu
+	copied     int64
+	lastReport time.Time
+	firedDone  bool
 }
 
 func (pr *ProgressReader) Read(p []byte) (int, error) {
 	n, err := pr.reader.Read(p)
+
+	pr.mu.Lock()
 	pr.copied += int64(n)
+	copied := pr.copied
+
+	shouldReport := !pr.firedDone && pr.callback != nil && pr.total > 0
+	if shouldReport {
+		justFinished := copied >= pr.total
+		if justFinished {
+			pr.firedDone = true
+		}
+		if justFinished || time.Since(pr.lastReport) >= pr.minInterval {
+			pr.lastReport = time.Now()
+		} else {
+			shouldReport = false
+		}
+	}
+	pr.mu.Unlock()
 
 	if n > 0 && pr.stallCh != nil {
 		select {
@@ -67,19 +131,12 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 		}
 	}
 
-	if !pr.firedDone && pr.callback != nil && pr.total > 0 {
-		justFinished := pr.copied >= pr.total
-		if justFinished {
-			pr.firedDone = true
-		}
-		if justFinished || time.Since(pr.lastReport) >= pr.minInterval {
-			pr.lastReport = time.Now()
-			pr.callback(TransferProgress{
-				FileName:    pr.fileName,
-				BytesCopied: pr.copied,
-				TotalBytes:  pr.total,
-			})
-		}
+	if shouldReport {
+		pr.callback(TransferProgress{
+			FileName:    pr.fileName,
+			BytesCopied: copied,
+			TotalBytes:  pr.total,
+		})
 	}
 	return n, err
 }
@@ -98,17 +155,61 @@ func DownloadWithProgress(sourceFS FileSystem, remotePath, localDest string, pro
 	}
 
 	if info.IsDir() {
-		return downloadDir(sourceFS, remotePath, localDest, info, progress)
+		slog.Debug("DownloadWithProgress: is directory, calling downloadDir",
+			"path", remotePath)
+		err = downloadDir(sourceFS, remotePath, localDest, info, progress)
+		slog.Debug("DownloadWithProgress: downloadDir returned",
+			"path", remotePath, "error", err)
+		return err
 	}
-	return downloadFile(sourceFS, remotePath, localDest, info, progress)
+	slog.Debug("DownloadWithProgress: is file, calling downloadFile",
+		"path", remotePath)
+	err = downloadFile(sourceFS, remotePath, localDest, info, progress)
+	slog.Debug("DownloadWithProgress: downloadFile returned",
+		"path", remotePath, "error", err)
+	return err
 }
 
 func downloadFile(sourceFS FileSystem, remotePath, localDest string, info os.FileInfo, progress ProgressCallback) error {
 	remoteFile, err := sourceFS.Open(remotePath)
 	if err != nil {
-		return fmt.Errorf("failed to open remote file %s: %w", remotePath, err)
+		if isPermissionDenied(err) {
+			if rootFS, ok := sourceFS.(RootFileSystem); ok {
+				slog.Debug("Permission denied, retrying with sudo", "path", remotePath)
+				rootReader, rootErr := rootFS.OpenAsRoot(remotePath)
+				if rootErr != nil {
+					slog.Error("Sudo retry also failed", "path", remotePath, "error", rootErr)
+					return &PermissionDeniedWithSudoError{
+						Path:      remotePath,
+						Wrapped:   errors.Join(err, rootErr),
+						RootFS:    rootFS,
+						LocalDest: localDest,
+						Info:      info,
+					}
+				}
+				// Sudo retry succeeded — treat rootReader as the remote file
+				remoteFile = rootReader
+				// Remote file cleanup is handled via defer below; rootReader
+				// wraps the SSH session, so remoteFile.Close() cleans it up.
+			}
+		}
+		if remoteFile == nil {
+			return fmt.Errorf("failed to open remote file %s: %w", remotePath, err)
+		}
 	}
-	defer remoteFile.Close()
+	defer func() {
+		done := make(chan struct{})
+		go func() {
+			remoteFile.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			slog.Warn("downloadFile: remoteFile.Close timed out",
+				"path", remotePath)
+		}
+	}()
 
 	localFile, err := os.OpenFile(localDest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
 	if err != nil {
@@ -149,27 +250,33 @@ func downloadFile(sourceFS FileSystem, remotePath, localDest string, info os.Fil
 					<-stallTimer.C
 				}
 				stallTimer.Reset(defaultStallTimeout)
-			case <-stallTimer.C:
-				cancel()
-				// Close the remote file to unblock the stuck Read in io.Copy
-				remoteFile.Close()
-				return
-			case <-ctx.Done():
-				return
-			}
+		case <-stallTimer.C:
+			slog.Warn("downloadFile stall timer fired — no progress for",
+				"timeout", defaultStallTimeout, "path", remotePath)
+			cancel()
+			// Close the remote file to unblock the stuck Read in io.Copy
+			remoteFile.Close()
+			return
+		case <-ctx.Done():
+			return
 		}
-	}()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return fmt.Errorf("failed to copy remote file %s to %s: %w", remotePath, localDest, err)
-		}
-		cancel()
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("download %s stalled: no progress for %v", filepath.Base(remotePath), defaultStallTimeout)
 	}
+}()
+
+select {
+case err := <-errCh:
+	if err != nil {
+		return fmt.Errorf("failed to copy remote file %s to %s: %w", remotePath, localDest, err)
+	}
+	cancel()
+	slog.Debug("downloadFile completed successfully",
+		"path", remotePath, "size", info.Size())
+	return nil
+case <-ctx.Done():
+	errMsg := fmt.Errorf("download %s stalled: no progress for %v", filepath.Base(remotePath), defaultStallTimeout)
+	slog.Warn("downloadFile timed out", "path", remotePath, "error", errMsg)
+	return errMsg
+}
 }
 
 func downloadDir(sourceFS FileSystem, remotePath, localDest string, info os.FileInfo, progress ProgressCallback) error {
@@ -181,25 +288,40 @@ func downloadDir(sourceFS FileSystem, remotePath, localDest string, info os.File
 	if err != nil {
 		return fmt.Errorf("failed to read remote directory %s: %w", remotePath, err)
 	}
+	slog.Debug("downloadDir: ReadDir returned",
+		"path", remotePath, "count", len(entries))
 
-	for _, entry := range entries {
+	for i, entry := range entries {
 		srcPath := sourceFS.Join(remotePath, entry.Name())
 		dstPath := filepath.Join(localDest, entry.Name())
+		slog.Debug("downloadDir: processing entry",
+			"i", i, "name", entry.Name(),
+			"isDir", entry.IsDir(), "path", remotePath)
 
 		if entry.IsDir() {
 			entryInfo, err := sourceFS.Stat(srcPath)
 			if err != nil {
 				return fmt.Errorf("failed to stat remote path %s: %w", srcPath, err)
 			}
+			slog.Debug("downloadDir: recursing into subdirectory",
+				"name", entry.Name(), "srcPath", srcPath)
 			if err := downloadDir(sourceFS, srcPath, dstPath, entryInfo, progress); err != nil {
 				return err
 			}
+			slog.Debug("downloadDir: subdirectory done",
+				"name", entry.Name(), "srcPath", srcPath)
 		} else {
+			slog.Debug("downloadDir: calling downloadFile",
+				"name", entry.Name(), "srcPath", srcPath)
 			if err := downloadFile(sourceFS, srcPath, dstPath, entry, progress); err != nil {
 				return err
 			}
+			slog.Debug("downloadDir: downloadFile done",
+				"name", entry.Name(), "srcPath", srcPath)
 		}
 	}
+	slog.Debug("downloadDir: all entries processed, returning nil",
+		"path", remotePath)
 	return nil
 }
 
@@ -271,26 +393,32 @@ func uploadFile(targetFS FileSystem, localPath, remoteDest string, info os.FileI
 					<-stallTimer.C
 				}
 				stallTimer.Reset(defaultStallTimeout)
-			case <-stallTimer.C:
-				cancel()
-				remoteFile.Close()
-				return
-			case <-ctx.Done():
-				return
-			}
+		case <-stallTimer.C:
+			slog.Warn("uploadFile stall timer fired — no progress for",
+				"timeout", defaultStallTimeout, "path", localPath)
+			cancel()
+			remoteFile.Close()
+			return
+		case <-ctx.Done():
+			return
 		}
-	}()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return fmt.Errorf("failed to upload %s to %s: %w", localPath, remoteDest, err)
-		}
-		cancel() // signal stall monitor to stop
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("upload %s stalled: no progress for %v", filepath.Base(localPath), defaultStallTimeout)
 	}
+}()
+
+select {
+case err := <-errCh:
+	if err != nil {
+		return fmt.Errorf("failed to upload %s to %s: %w", localPath, remoteDest, err)
+	}
+	cancel() // signal stall monitor to stop
+	slog.Debug("uploadFile completed successfully",
+		"path", localPath, "size", info.Size())
+	return nil
+case <-ctx.Done():
+	errMsg := fmt.Errorf("upload %s stalled: no progress for %v", filepath.Base(localPath), defaultStallTimeout)
+	slog.Warn("uploadFile timed out", "path", localPath, "error", errMsg)
+	return errMsg
+}
 }
 
 func uploadDir(targetFS FileSystem, localPath, remoteDest string, info os.FileInfo, progress ProgressCallback) error {
@@ -347,6 +475,17 @@ func RemoteCopyWithProgress(sourceFS, targetFS FileSystem, srcPath, dstPath stri
 func remoteCopyFile(sourceFS, targetFS FileSystem, srcPath, dstPath string, info os.FileInfo, progress ProgressCallback) error {
 	srcFile, err := sourceFS.Open(srcPath)
 	if err != nil {
+		if isPermissionDenied(err) {
+			if rootFS, ok := sourceFS.(RootFileSystem); ok {
+				return &PermissionDeniedWithSudoError{
+					Path:      srcPath,
+					Wrapped:   err,
+					RootFS:    rootFS,
+					LocalDest: dstPath,
+					Info:      info,
+				}
+			}
+		}
 		return fmt.Errorf("failed to open remote source file %s: %w", srcPath, err)
 	}
 	defer srcFile.Close()
@@ -390,27 +529,33 @@ func remoteCopyFile(sourceFS, targetFS FileSystem, srcPath, dstPath string, info
 					<-stallTimer.C
 				}
 				stallTimer.Reset(defaultStallTimeout)
-			case <-stallTimer.C:
-				cancel()
-				// Close the destination file to unblock the stuck Write in io.Copy
-				dstFile.Close()
-				return
-			case <-ctx.Done():
-				return
-			}
+		case <-stallTimer.C:
+			slog.Warn("remoteCopyFile stall timer fired — no progress for",
+				"timeout", defaultStallTimeout, "path", srcPath)
+			cancel()
+			// Close the destination file to unblock the stuck Write in io.Copy
+			dstFile.Close()
+			return
+		case <-ctx.Done():
+			return
 		}
-	}()
-
-	select {
-	case err := <-errCh:
-		if err != nil {
-			return fmt.Errorf("failed to copy remote file %s to %s: %w", srcPath, dstPath, err)
-		}
-		cancel()
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("remote copy %s stalled: no progress for %v", filepath.Base(srcPath), defaultStallTimeout)
 	}
+}()
+
+select {
+case err := <-errCh:
+	if err != nil {
+		return fmt.Errorf("failed to copy remote file %s to %s: %w", srcPath, dstPath, err)
+	}
+	cancel()
+	slog.Debug("remoteCopyFile completed successfully",
+		"path", srcPath, "size", info.Size())
+	return nil
+case <-ctx.Done():
+	errMsg := fmt.Errorf("remote copy %s stalled: no progress for %v", filepath.Base(srcPath), defaultStallTimeout)
+	slog.Warn("remoteCopyFile timed out", "path", srcPath, "error", errMsg)
+	return errMsg
+}
 }
 
 // DeleteRemoteWithProgress removes files/directories from a remote FS,
@@ -439,14 +584,15 @@ func DeleteRemoteWithProgress(fs FileSystem, rootPath string, progress ProgressC
 		return nil
 	}
 
-	// Directory — first pass: count total files
-	fileCount := 0
-	err = fs.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	// Directory — single walk: collect file paths and count in one pass.
+	// Then delete each file from the collected slice (no second walk).
+	var filePaths []string
+	err = fs.Walk(rootPath, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
 		if !info.IsDir() {
-			fileCount++
+			filePaths = append(filePaths, path)
 		}
 		return nil
 	})
@@ -454,30 +600,18 @@ func DeleteRemoteWithProgress(fs FileSystem, rootPath string, progress ProgressC
 		return fmt.Errorf("failed to walk remote path for counting: %w", err)
 	}
 
-	// Second pass: delete each file with progress
-	deleted := 0
-	err = fs.Walk(rootPath, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if info.IsDir() {
-			return nil // skip dirs, will clean up with RemoveAll at the end
-		}
+	// Delete each file with progress (flat iteration, not a second walk)
+	for i, path := range filePaths {
 		if err := fs.Remove(path); err != nil {
 			return fmt.Errorf("failed to delete remote file %s: %w", path, err)
 		}
-		deleted++
 		if progress != nil {
 			progress(TransferProgress{
 				FileName:    filepath.Base(path),
-				BytesCopied: int64(deleted),
-				TotalBytes:  int64(fileCount),
+				BytesCopied: int64(i + 1),
+				TotalBytes:  int64(len(filePaths)),
 			})
 		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 
 	// Remove the now-empty directory tree

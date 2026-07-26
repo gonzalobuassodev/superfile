@@ -235,6 +235,9 @@ func remoteMoveElement(fs backend.FileSystem, src, dst string) error {
 func remotePasteDir(sourceFS, targetFS backend.FileSystem, src, dst string,
 	p *processbar.Process, cut bool, processBarModel *processbar.Model) error {
 	dst = renameIfDuplicateLocal(dst)
+	slog.Debug("remotePasteDir: start",
+		"src", src, "dst", dst, "cut", cut,
+		"sourceFS", sourceFS != nil, "targetFS", targetFS != nil)
 
 	// Build progress callback that updates the process bar.
 	// Fires every ~100ms per file so the user sees byte/MB progress
@@ -259,44 +262,75 @@ func remotePasteDir(sourceFS, targetFS backend.FileSystem, src, dst string,
 	if sourceFS == nil && targetFS != nil {
 		// Local → Remote (upload)
 		if err := backend.UploadWithProgress(targetFS, src, dst, progressCb); err != nil {
+			slog.Debug("remotePasteDir: upload failed", "src", src, "error", err)
 			return err
 		}
 		if cut {
+			slog.Debug("remotePasteDir: cut=true, removing local source after upload",
+				"src", src)
 			if err := os.RemoveAll(src); err != nil {
+				slog.Debug("remotePasteDir: remove after upload failed", "src", src, "error", err)
 				return fmt.Errorf("failed to remove source after upload: %w", err)
 			}
+			slog.Debug("remotePasteDir: local source removed after upload", "src", src)
 		}
+		slog.Debug("remotePasteDir: upload done, returning nil", "src", src)
 		return nil
 	}
 
 	if sourceFS != nil && targetFS == nil {
 		// Remote → Local (download)
+		slog.Debug("remotePasteDir: starting DownloadWithProgress",
+			"src", src, "dst", dst, "cut", cut)
 		if err := backend.DownloadWithProgress(sourceFS, src, dst, progressCb); err != nil {
+			slog.Debug("remotePasteDir: DownloadWithProgress failed",
+				"src", src, "error", err)
 			return err
 		}
+		slog.Debug("remotePasteDir: DownloadWithProgress returned successfully",
+			"src", src, "dst", dst, "cut", cut)
 		if cut {
+			slog.Debug("remotePasteDir: cut=true, removing remote source after download",
+				"src", src)
 			if err := sourceFS.RemoveAll(src); err != nil {
+				slog.Debug("remotePasteDir: remove after download failed",
+					"src", src, "error", err)
 				return fmt.Errorf("failed to remove remote source after download: %w", err)
 			}
+			slog.Debug("remotePasteDir: remote source removed after download", "src", src)
 		}
+		slog.Debug("remotePasteDir: download done, returning nil",
+			"src", src, "cut", cut)
 		return nil
 	}
 
 	// Remote → Remote
 	if cut && sameRemoteFS(sourceFS, targetFS) {
+		slog.Debug("remotePasteDir: same-FS rename", "src", src, "dst", dst)
 		if err := targetFS.Rename(src, dst); err != nil {
 			return err
 		}
+		slog.Debug("remotePasteDir: rename done, returning nil", "src", src)
 		return nil
 	}
+	slog.Debug("remotePasteDir: starting RemoteCopyWithProgress",
+		"src", src, "dst", dst, "cut", cut)
 	if err := backend.RemoteCopyWithProgress(sourceFS, targetFS, src, dst, progressCb); err != nil {
+		slog.Debug("remotePasteDir: RemoteCopyWithProgress failed", "src", src, "error", err)
 		return err
 	}
+	slog.Debug("remotePasteDir: RemoteCopyWithProgress returned successfully",
+		"src", src, "dst", dst, "cut", cut)
 	if cut {
+		slog.Debug("remotePasteDir: cut=true, removing remote source after copy",
+			"src", src)
 		if err := sourceFS.RemoveAll(src); err != nil {
+			slog.Debug("remotePasteDir: remove after copy failed", "src", src, "error", err)
 			return fmt.Errorf("failed to remove remote source after copy: %w", err)
 		}
+		slog.Debug("remotePasteDir: remote source removed after copy", "src", src)
 	}
+	slog.Debug("remotePasteDir: copy done, returning nil", "src", src)
 	return nil
 }
 

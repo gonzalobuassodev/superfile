@@ -290,14 +290,14 @@ func (m *model) passwordModalOpenKey(msg string) tea.Cmd {
 
 		// Spawn background goroutine that dials with password
 		return func() tea.Msg {
-			sftpClient, err := backend.DialWithPassword(host, port, user, password, backend.DefaultSSHTimeout)
+			sftpClient, sshClient, err := backend.DialWithPassword(host, port, user, password, backend.DefaultSSHTimeout)
 			if err != nil {
 				return SSHPasswordResponseMsg{
 					ConnectionName: connName,
 					Error:          fmt.Errorf("SSH password auth failed: %w", err),
 				}
 			}
-			fs := backend.NewSFTPFileSystem(sftpClient, connName)
+			fs := backend.NewSFTPFileSystemWithSSH(sftpClient, sshClient, connName)
 			return SSHPasswordResponseMsg{
 				ConnectionName: connName,
 				FS:             fs,
@@ -311,6 +311,47 @@ func (m *model) passwordModalOpenKey(msg string) tea.Cmd {
 
 	default:
 		return nil
+	}
+	return nil
+}
+
+// sudoPasswordModalOpenKey handles keyboard input when the sudo password modal is open.
+// Enter submits the password (writing it to the pending response channel), Escape cancels.
+func (m *model) sudoPasswordModalOpenKey(msg string) tea.Cmd {
+	switch {
+	case slices.Contains(common.Hotkeys.ConfirmTyping, msg):
+		password := m.sudoPasswordModal.textInput.Value()
+		if password == "" {
+			m.sudoPasswordModal.errorMesssage = "Password cannot be empty"
+			return nil
+		}
+
+		// Send password through the result channel
+		if m.sudoPasswordResultCh != nil {
+			m.sudoPasswordResultCh <- SudoPasswordResponseMsg{
+				Password: password,
+				OK:       true,
+			}
+			m.sudoPasswordResultCh = nil
+		}
+
+		m.sudoPasswordModal.open = false
+		m.sudoPasswordModal.textInput.Reset()
+		m.sudoPasswordModal.errorMesssage = ""
+		return nil
+
+	case slices.Contains(common.Hotkeys.CancelTyping, msg):
+		// Send cancellation
+		if m.sudoPasswordResultCh != nil {
+			m.sudoPasswordResultCh <- SudoPasswordResponseMsg{
+				OK: false,
+			}
+			m.sudoPasswordResultCh = nil
+		}
+
+		m.sudoPasswordModal.open = false
+		m.sudoPasswordModal.textInput.Reset()
+		m.sudoPasswordModal.errorMesssage = ""
 	}
 	return nil
 }

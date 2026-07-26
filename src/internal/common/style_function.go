@@ -181,6 +181,18 @@ func GeneratePasswordTextInput() textinput.Model {
 	return ti
 }
 
+func GenerateSudoPasswordTextInput() textinput.Model {
+	ti := textinput.New()
+	ti.EchoMode = textinput.EchoPassword
+	ti.EchoCharacter = '*'
+	ti.Placeholder = "Enter sudo password"
+	setTextInputStyles(&ti, ModalStyle, ModalStyle)
+	ti.Focus()
+	ti.CharLimit = 256
+	ti.SetWidth(ModalWidth - 10)
+	return ti
+}
+
 func GenerateSSHAddInput(width int) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = FilePanelCursorStyle.Render(icon.SSH + icon.Space)

@@ -83,7 +83,13 @@ func (m *Model) TrySendingUpdateProcessMsg(p Process) {
 	msg := updateProcessMsg{NewProcess: p, BaseMsg: BaseMsg{reqID: m.newReqCnt()}}
 	err := m.sendMsgToChannel(msg, false)
 	if err != nil {
-		slog.Error("Failed to send message to channel", "reqID", msg.GetReqID(), "error", err)
+		slog.Error("TrySendingUpdateProcessMsg channel full, DROPPED",
+			"reqID", msg.GetReqID(), "processID", p.ID,
+			"state", p.State, "done", p.Done, "total", p.Total, "error", err)
+	} else {
+		slog.Debug("TrySendingUpdateProcessMsg sent",
+			"reqID", msg.GetReqID(), "processID", p.ID,
+			"state", p.State, "done", p.Done, "total", p.Total)
 	}
 }
 

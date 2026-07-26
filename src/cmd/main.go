@@ -150,7 +150,11 @@ func spfAppAction(_ context.Context, c *cli.Command) error {
 
 	firstUse := checkFirstUse()
 
-	p := tea.NewProgram(internal.InitialModel(firstPanelPaths, firstUse))
+	initialModel := internal.InitialModel(firstPanelPaths, firstUse)
+	p := tea.NewProgram(initialModel)
+	if settable, ok := initialModel.(internal.ProgramSettable); ok {
+		settable.SetProgram(p)
+	}
 	if _, err := p.Run(); err != nil {
 		utils.PrintfAndExitf("Alas, there's been an error: %v", err)
 	}

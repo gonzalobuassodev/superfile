@@ -73,3 +73,10 @@ type FileSystem interface {
 	// IsLocal returns true if this is the local OS filesystem.
 	IsLocal() bool
 }
+
+// RootFileSystem is an optional interface that a FileSystem can implement
+// to provide privileged read access (e.g., via sudo over SSH) when standard
+// Open returns a permission-denied error.
+type RootFileSystem interface {
+	OpenAsRoot(path string) (io.ReadCloser, error)
+}

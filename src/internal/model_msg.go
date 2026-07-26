@@ -169,6 +169,20 @@ func (m MetadataUpdateMsg) ApplyToModel(model *model) tea.Cmd {
 	return processCmdToTeaCmd(model.processBarModel.GetListenCmd())
 }
 
+// SudoPasswordRequestMsg requests a sudo password for a remote file access.
+type SudoPasswordRequestMsg struct {
+	ConnectionName string
+	HostInfo       string
+	ResultCh       chan SudoPasswordResponseMsg
+}
+
+// SudoPasswordResponseMsg carries the user's sudo password response.
+type SudoPasswordResponseMsg struct {
+	ConnectionName string
+	Password       string
+	OK             bool
+}
+
 // SSHPasswordRequestMsg requests a password-based SSH connection.
 type SSHPasswordRequestMsg struct {
 	ConnectionName string

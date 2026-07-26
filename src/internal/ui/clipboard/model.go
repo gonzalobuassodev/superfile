@@ -61,17 +61,14 @@ func (m *Model) Render() string {
 			if i == itemRows-1 && i != len(m.items.items)-1 {
 				// Last Entry we can render, but there are more that one left
 				r.AddLines(strconv.Itoa(len(m.items.items)-i) + " items left....")
+			} else if m.items.SourceFS != nil {
+				// Remote FS: skip Stat to avoid blocking the UI thread with
+				// a synchronous SFTP network call on every frame render.
+				r.AddLines(common.ClipboardPrettierName(m.items.items[i],
+					viewWidth, false, false, false))
 			} else {
-				// TODO: Avoid Lstat during render for performance
-				// Add IsDir/IsLink information in the item type or
-				// better use filepanel's Element strcut as-is
-				var fileInfo os.FileInfo
-				var err error
-				if m.items.SourceFS != nil {
-					fileInfo, err = m.items.SourceFS.Stat(m.items.items[i])
-				} else {
-					fileInfo, err = os.Lstat(m.items.items[i])
-				}
+				// Local FS: lightweight Lstat to show dir/link decoration
+				fileInfo, err := os.Lstat(m.items.items[i])
 				if err != nil {
 					slog.Error("Clipboard render function get item state ", "error", err)
 					continue
@@ -113,12 +110,13 @@ func (m *Model) SetItems(items []string) {
 	copy(m.items.items, items)
 }
 
+// pruneInaccessibleItems removes clipboard entries that no longer exist on the
+// source filesystem. For remote filesystems (SFTP), we skip pruning entirely
+// because calling Stat on every clipboard item would block the UI thread with
+// synchronous SSH round trips. The paste operation will fail gracefully if an
+// item is no longer accessible.
 func (m *Model) pruneInaccessibleItems() {
 	if m.items.SourceFS != nil {
-		m.items.items = slices.DeleteFunc(m.items.items, func(item string) bool {
-			_, err := m.items.SourceFS.Stat(item)
-			return err != nil
-		})
 		return
 	}
 	m.items.items = slices.DeleteFunc(m.items.items, func(item string) bool {

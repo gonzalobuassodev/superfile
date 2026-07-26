@@ -109,16 +109,18 @@ port = 2222
 }
 
 func TestDialWithKey_InvalidPath(t *testing.T) {
-	client, err := DialWithKey("localhost", 22, "test", "/nonexistent/key", time.Second)
+	client, sshClient, err := DialWithKey("localhost", 22, "test", "/nonexistent/key", time.Second)
 	assert.Error(t, err)
 	assert.Nil(t, client)
+	assert.Nil(t, sshClient)
 	assert.Contains(t, err.Error(), "failed to read SSH key")
 }
 
 func TestDialWithPassword_InvalidHost(t *testing.T) {
-	client, err := DialWithPassword("192.0.2.1", 22, "test", "password", time.Second)
+	client, sshClient, err := DialWithPassword("192.0.2.1", 22, "test", "password", time.Second)
 	assert.Error(t, err)
 	assert.Nil(t, client)
+	assert.Nil(t, sshClient)
 }
 
 func TestHostKeyCallbackWithKnownHosts_EmptyPath(t *testing.T) {

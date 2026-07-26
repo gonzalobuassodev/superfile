@@ -124,6 +124,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SSHPasswordResponseMsg:
 		slog.Debug("Got SSHPasswordResponseMsg", "connection", msg.ConnectionName, "error", msg.Error != nil)
 		updateCmd = m.handleSSHPasswordResponse(msg)
+	case SudoPasswordRequestMsg:
+		slog.Debug("Got SudoPasswordRequestMsg", "connection", msg.ConnectionName)
+		m.sudoPasswordModal.open = true
+		m.sudoPasswordModal.hostInfo = msg.HostInfo
+		m.sudoPasswordModal.textInput = common.GenerateSudoPasswordTextInput()
+		m.sudoPasswordModal.errorMesssage = ""
+		m.sudoPasswordResultCh = msg.ResultCh
+		// Invalidate background cache so the next render caches a fresh view
+		m.backgroundCacheValid = false
 	case RemoteDirLoadedMsg:
 		slog.Debug("Got RemoteDirLoadedMsg", "panel", msg.PanelIndex, "error", msg.Error != nil)
 		if msg.PanelIndex >= 0 && msg.PanelIndex < len(m.fileModel.FilePanels) {
@@ -269,6 +278,9 @@ func (m *model) handleWindowResize(msg tea.WindowSizeMsg) tea.Cmd {
 	m.fullHeight = msg.Height
 	m.fullWidth = msg.Width
 	m.setHeightValues()
+	// Invalidate background cache on resize so keyboard input in modals
+	// doesn't show stale panel dimensions.
+	m.backgroundCacheValid = false
 	return m.updateComponentDimensions()
 }
 
@@ -381,6 +393,8 @@ func (m *model) handleKeyInput(msg tea.KeyPressMsg) tea.Cmd {
 		cmd = m.spfErrorModelOpenKey(msg.String())
 	case m.passwordModal.open:
 		cmd = m.passwordModalOpenKey(msg.String())
+	case m.sudoPasswordModal.open:
+		cmd = m.sudoPasswordModalOpenKey(msg.String())
 	case m.typingModal.open:
 		m.typingModalOpenKey(msg.String())
 	case m.promptModal.IsOpen():
@@ -459,6 +473,8 @@ func (m *model) updateComponentState(msg tea.Msg) tea.Cmd {
 		focusPanel.SearchBar, cmd = focusPanel.SearchBar.Update(msg)
 	case m.passwordModal.open:
 		m.passwordModal.textInput, cmd = m.passwordModal.textInput.Update(msg)
+	case m.sudoPasswordModal.open:
+		m.sudoPasswordModal.textInput, cmd = m.sudoPasswordModal.textInput.Update(msg)
 	case m.typingModal.open:
 		m.typingModal.textInput, cmd = m.typingModal.textInput.Update(msg)
 	case m.promptModal.IsOpen():
@@ -608,7 +624,22 @@ func (m *model) viewContent() string {
 		slog.Error("Invalid layout", "error", err)
 	}
 
-	return m.updateRenderForOverlay(m.mainComponentsRender())
+	// When the sudo password modal is open and we have a cached background,
+	// skip the expensive full UI re-render to avoid typing lag. Only the
+	// modal overlay changes on keystrokes — the file panels, sidebar, and
+	// footer remain the same.
+	if m.sudoPasswordModal.open && m.backgroundCacheValid {
+		return m.updateRenderForOverlay(m.backgroundCache)
+	}
+
+	background := m.mainComponentsRender()
+
+	if m.sudoPasswordModal.open {
+		m.backgroundCache = background
+		m.backgroundCacheValid = true
+	}
+
+	return m.updateRenderForOverlay(background)
 }
 
 func (m *model) updateRenderForOverlay(finalRender string) string {
@@ -662,6 +693,13 @@ func (m *model) updateRenderForOverlay(finalRender string) string {
 		return stringfunction.PlaceOverlay(overlayX, overlayY, passwordModal, finalRender)
 	}
 
+	if m.sudoPasswordModal.open {
+		sudoPasswordModal := m.sudoPasswordModalRender()
+		overlayX := m.fullWidth/common.CenterDivisor - common.ModalWidth/common.CenterDivisor
+		overlayY := m.fullHeight/common.CenterDivisor - common.ModalHeight/common.CenterDivisor
+		return stringfunction.PlaceOverlay(overlayX, overlayY, sudoPasswordModal, finalRender)
+	}
+
 	if m.typingModal.open {
 		typingModal := m.typineModalRender()
 		overlayX := m.fullWidth/common.CenterDivisor - common.ModalWidth/common.CenterDivisor
@@ -693,6 +731,18 @@ func (m *model) mainComponentsRender() string {
 	clipboardBar := m.clipboard.Render()
 	footer := lipgloss.JoinHorizontal(0, processBar, metaData, clipboardBar)
 	return lipgloss.JoinVertical(0, mainPanel, footer)
+}
+
+// ProgramSettable is implemented by the model to receive a *tea.Program reference
+// for sending messages from background goroutines.
+type ProgramSettable interface {
+	SetProgram(p *tea.Program)
+}
+
+// SetProgram stores a reference to the Bubbletea program so that background
+// goroutines (e.g., file processors) can send messages to the event loop.
+func (m *model) SetProgram(p *tea.Program) {
+	m.program = p
 }
 
 // Close superfile application. Cd into the current dir if CdOnQuit on and save
@@ -762,7 +812,7 @@ func (m *model) handleConnectToSSH(connectionName string) tea.Cmd {
 			}
 		}
 
-		sftpClient, dialErr := backend.DialWithKey(conn.Host, conn.Port, conn.User, conn.KeyPath, backend.DefaultSSHTimeout)
+		sftpClient, sshClient, dialErr := backend.DialWithKey(conn.Host, conn.Port, conn.User, conn.KeyPath, backend.DefaultSSHTimeout)
 		if dialErr != nil {
 			// Key auth failed — open the password modal if the connection
 			// is configured for password auth or fall back to asking.
@@ -776,7 +826,7 @@ func (m *model) handleConnectToSSH(connectionName string) tea.Cmd {
 			return nil
 		}
 
-		fs := backend.NewSFTPFileSystem(sftpClient, connectionName)
+		fs := backend.NewSFTPFileSystemWithSSH(sftpClient, sshClient, connectionName)
 		return SSHConnectedMsg{
 			ConnectionName: connectionName,
 			FS:             fs,
@@ -822,11 +872,10 @@ func (m *model) handleSSHConnected(msg SSHConnectedMsg) tea.Cmd {
 
 // handleSSHPasswordResponse processes the result of a password-based SSH
 // connection attempt. On success, it stores the connection and creates a
-// remote file panel. On failure, it shows the error in the password modal
-// and keeps the modal open for retry.
+// remote file panel. On failure, it sets the error and keeps the modal open
+// for retry (the modal was already closed by passwordModalOpenKey, so we
+// reopen it here explicitly).
 func (m *model) handleSSHPasswordResponse(msg SSHPasswordResponseMsg) tea.Cmd {
-	m.passwordModal.open = false
-
 	if msg.Error != nil {
 		slog.Error("SSH password connection failed", "name", msg.ConnectionName, "error", msg.Error)
 		m.passwordModal.errorMesssage = msg.Error.Error()
@@ -852,6 +901,7 @@ func (m *model) handleSSHPasswordResponse(msg SSHPasswordResponseMsg) tea.Cmd {
 			slog.Error("Error closing remote FS after panel failure", "error", closeErr)
 		}
 		delete(m.activeConnections, msg.ConnectionName)
+		m.passwordModal.open = false
 		return nil
 	}
 

@@ -202,15 +202,15 @@ func LoadSSHConnectionsFromConfigFile() ([]SSHConnection, error) {
 }
 
 // DialWithKey connects to an SSH server using key-based authentication.
-func DialWithKey(host string, port int, user string, keyPath string, timeout time.Duration) (*sftp.Client, error) {
+func DialWithKey(host string, port int, user string, keyPath string, timeout time.Duration) (*sftp.Client, *ssh.Client, error) {
 	key, err := os.ReadFile(keyPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read SSH key %s: %w", keyPath, err)
+		return nil, nil, fmt.Errorf("failed to read SSH key %s: %w", keyPath, err)
 	}
 
 	signer, err := ssh.ParsePrivateKey(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse SSH key %s: %w", keyPath, err)
+		return nil, nil, fmt.Errorf("failed to parse SSH key %s: %w", keyPath, err)
 	}
 
 	config := &ssh.ClientConfig{
@@ -223,8 +223,7 @@ func DialWithKey(host string, port int, user string, keyPath string, timeout tim
 	return dialSFTP(host, port, config)
 }
 
-// DialWithPassword connects to an SSH server using password authentication.
-func DialWithPassword(host string, port int, user string, password string, timeout time.Duration) (*sftp.Client, error) {
+func DialWithPassword(host string, port int, user string, password string, timeout time.Duration) (*sftp.Client, *ssh.Client, error) {
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.Password(password)},
@@ -235,23 +234,29 @@ func DialWithPassword(host string, port int, user string, password string, timeo
 	return dialSFTP(host, port, config)
 }
 
-// dialSFTP creates an SSH connection and returns an SFTP client.
-func dialSFTP(host string, port int, config *ssh.ClientConfig) (*sftp.Client, error) {
+// sshQuote shell-escapes a path for use in a remote command.
+// Wraps in single quotes and escapes any embedded single quotes.
+func sshQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+}
+
+// dialSFTP creates an SSH connection and returns both the SSH and SFTP clients.
+func dialSFTP(host string, port int, config *ssh.ClientConfig) (*sftp.Client, *ssh.Client, error) {
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	slog.Debug("Dialing SSH", "addr", addr, "user", config.User)
 
 	sshClient, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		return nil, fmt.Errorf("SSH dial failed: %w", err)
+		return nil, nil, fmt.Errorf("SSH dial failed: %w", err)
 	}
 
 	sftpClient, err := sftp.NewClient(sshClient)
 	if err != nil {
 		sshClient.Close()
-		return nil, fmt.Errorf("SFTP client creation failed: %w", err)
+		return nil, nil, fmt.Errorf("SFTP client creation failed: %w", err)
 	}
 
-	return sftpClient, nil
+	return sftpClient, sshClient, nil
 }
 
 // HostKeyCallbackWithKnownHosts creates an ssh.HostKeyCallback that validates

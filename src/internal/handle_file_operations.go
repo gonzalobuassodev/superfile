@@ -47,11 +47,40 @@ func (m *model) runFileProcessor(processor processbar.FileListProcessor,
 	return finalizer(result.State, reqID)
 }
 
-func markProcessDone(process processbar.Process, processBarModel *processbar.Model) {
+// markProcessDone sends the final update for a process directly to the
+// Bubbletea event loop via program.Send(), bypassing the process bar
+// channel entirely. This guarantees delivery regardless of channel state,
+// blocking, or goroutine issues.
+// If the process is already Failed, it preserves the Failed state and sends
+// the error info; otherwise it marks it as Successful.
+func markProcessDone(process processbar.Process, processBarModel *processbar.Model, program *tea.Program) {
 	process.DoneTime = time.Now()
-	err := processBarModel.SendUpdateProcessMsg(process, true)
-	if err != nil {
-		slog.Error("Failed to send final delete operation update", "error", err)
+	process.Done = process.Total
+	if process.State != processbar.Failed {
+		process.State = processbar.Successful
+	}
+	slog.Debug("markProcessDone starting (will use program.Send())",
+		"id", process.ID, "state", process.State,
+		"done", process.Done, "total", process.Total)
+
+	// Bypass the channel entirely and send directly to the event loop.
+	// This is the only reliable path for the final update — the channel
+	// can fill up during transfers and block or drop messages.
+	if program != nil {
+		upd := processbar.NewUpdateProcessMsg(process)
+		program.Send(ProcessBarUpdateMsg{
+			pMsg: upd,
+			BaseMessage: BaseMessage{
+				reqID: upd.GetReqID(),
+			},
+		})
+		slog.Debug("markProcessDone: program.Send() returned",
+			"id", process.ID)
+	} else {
+		// Fallback: try the channel if program isn't available
+		slog.Warn("markProcessDone: program is nil, falling back to blocking channel send",
+			"id", process.ID)
+		_ = processBarModel.SendUpdateProcessMsg(process, true)
 	}
 }
 
@@ -176,18 +205,21 @@ func (m *model) deleteOperation(processBarModel *processbar.Model, items []strin
 		return NewDeleteOperationMsg(processbar.Failed, reqID)
 	}
 	finalizer := func(state processbar.ProcessState, reqID int) tea.Msg { return NewDeleteOperationMsg(state, reqID) }
-	processor := makeDeleteProcessor(p, processBarModel, useTrash, fs)
+	processor := makeDeleteProcessor(p, processBarModel, useTrash, fs, m.program)
 	msg := m.runFileProcessor(processor, finalizer, items, reqID)
 	return msg
 }
 
 func makeDeleteProcessor(process processbar.Process,
 	processBarModel *processbar.Model,
-	useTrash bool, fs backend.FileSystem) processbar.FileListProcessor {
+	useTrash bool, fs backend.FileSystem,
+	program *tea.Program) processbar.FileListProcessor {
 	processorFunction := func(items []string) (processbar.Process, []string) {
 		notProcessed := make([]string, 0)
 		if len(items) == 0 {
-			markProcessDone(process, processBarModel)
+			process.State = processbar.Successful
+			process.Done = process.Total
+			markProcessDone(process, processBarModel, program)
 			return process, notProcessed
 		}
 		deleteFunc := os.RemoveAll
@@ -260,8 +292,17 @@ func makeDeleteProcessor(process processbar.Process,
 		}
 
 		if process.State != processbar.Failed {
+			slog.Debug("Delete processor loop done, marking process done",
+				"id", process.ID, "state", process.State,
+				"done", process.Done, "total", process.Total)
 			process.State = processbar.Successful
-			markProcessDone(process, processBarModel)
+			process.Done = process.Total
+			markProcessDone(process, processBarModel, program)
+		} else {
+			slog.Debug("Delete processor loop done, process already failed",
+				"id", process.ID, "state", process.State,
+				"done", process.Done, "total", process.Total)
+			markProcessDone(process, processBarModel, program)
 		}
 		return process, notProcessed
 	}
@@ -387,14 +428,30 @@ func (m *model) getPasteItemCmd() tea.Cmd {
 	targetFS := targetPanel.FS
 
 	slog.Debug("Submitting pasteItems request", "id", reqID, "items cnt", len(copyItems), "dest", panelLocation)
-	return func() tea.Msg {
+
+	// Run the paste operation in a background goroutine so we don't block
+	// bubbletea's handleCommands goroutine. In bubbletea v2, if the paste Cmd
+	// blocks synchronously, handleCommands can't process the processbar listener
+	// Cmd (which reads from m.msgChan), causing SendAddProcessMsg to deadlock
+	// on the channel. Running in a goroutine lets the listener run in parallel.
+	if m.program == nil {
+		slog.Error("Cannot run paste: program is nil")
+		return nil
+	}
+
+	prog := m.program
+	go func() {
 		err := validatePasteOperation(panelLocation, copyItems, cut)
 		if err != nil {
-			return NewNotifyModalMsg(notify.New(true, "Invalid paste location", err.Error(), notify.NoAction),
-				reqID)
+			prog.Send(NewNotifyModalMsg(notify.New(true, "Invalid paste location", err.Error(), notify.NoAction),
+				reqID))
+			return
 		}
-		return m.executePasteOperation(&m.processBarModel, panelLocation, copyItems, cut, reqID, sourceFS, targetFS)
-	}
+		result := m.executePasteOperation(&m.processBarModel, panelLocation, copyItems, cut, reqID, sourceFS, targetFS, 1)
+		prog.Send(result)
+	}()
+
+	return nil
 }
 
 func validatePasteOperation(panelLocation string, copyItems []string, cut bool) error {
@@ -423,11 +480,14 @@ func makePasteProcessor(process processbar.Process,
 	processBarModel *processbar.Model,
 	panelLocation string, cut bool,
 	sourceFS backend.FileSystem, targetFS backend.FileSystem,
+	program *tea.Program,
 ) processbar.FileListProcessor {
 	processorFunction := func(items []string) (processbar.Process, []string) {
 		notProcessed := make([]string, 0)
 		if len(items) == 0 {
-			markProcessDone(process, processBarModel)
+			process.State = processbar.Successful
+			process.Done = process.Total
+			markProcessDone(process, processBarModel, program)
 			return process, notProcessed
 		}
 		var err error
@@ -444,11 +504,18 @@ func makePasteProcessor(process processbar.Process,
 				} else {
 					remoteDest = filepath.Join(panelLocation, destPath)
 				}
+				slog.Debug("paste processor: calling remotePasteDir",
+					"item", filePath, "dest", remoteDest, "cut", cut,
+					"i", i, "totalItems", len(items))
 				err = remotePasteDir(sourceFS, targetFS, filePath, remoteDest,
 					&process, cut, processBarModel)
+				slog.Debug("paste processor: remotePasteDir returned",
+					"item", filePath, "err", err,
+					"done", process.Done, "total", process.Total)
 				if err != nil {
 					errMessage = "remote paste item error"
 				}
+
 			} else if cut && !isExternalDiskPath(filePath) {
 				err = moveElement(filePath, filepath.Join(panelLocation, destPath))
 			} else {
@@ -469,12 +536,39 @@ func makePasteProcessor(process processbar.Process,
 				notProcessed = items[i:]
 				break
 			}
+			slog.Debug("insert_paste_progress: calling TrySendingUpdateProcessMsg",
+				"id", process.ID, "state", process.State,
+				"done", process.Done, "total", process.Total,
+				"item", filePath)
 			processBarModel.TrySendingUpdateProcessMsg(process)
+			slog.Debug("insert_paste_progress: TrySendingUpdateProcessMsg returned",
+				"id", process.ID)
 		}
+		slog.Debug("insert_paste_progress: after for loop, before state check",
+			"id", process.ID, "state", process.State,
+			"done", process.Done, "total", process.Total)
 		if process.State != processbar.Failed {
+			// If Done exceeded the placeholder total (1), correct Total so the
+			// completion message shows the actual number of files processed.
+			if process.Done > process.Total {
+				slog.Debug("Correcting placeholder total",
+					"old", process.Total, "new", process.Done)
+				process.Total = process.Done
+			}
+			if process.Total == 0 {
+				process.Total = process.Done
+			}
+			slog.Debug("Paste processor loop done, marking process done",
+				"id", process.ID, "state", process.State,
+				"done", process.Done, "total", process.Total)
 			process.State = processbar.Successful
 			process.Done = process.Total
-			markProcessDone(process, processBarModel)
+			markProcessDone(process, processBarModel, program)
+		} else {
+			slog.Debug("Paste processor loop done, process already failed",
+				"id", process.ID, "state", process.State,
+				"done", process.Done, "total", process.Total)
+			markProcessDone(process, processBarModel, program)
 		}
 		return process, notProcessed
 	}
@@ -484,10 +578,33 @@ func makePasteProcessor(process processbar.Process,
 func (m *model) executePasteOperation(processBarModel *processbar.Model,
 	panelLocation string, items []string, cut bool, reqID int,
 	sourceFS backend.FileSystem, targetFS backend.FileSystem,
+	totalFiles int,
 ) tea.Msg {
 	if len(items) == 0 {
 		return NewPasteOperationMsg(processbar.Cancelled, reqID)
 	}
+
+	// Set up sudo password provider for the source filesystem if it supports it.
+	// This allows OpenAsRoot to prompt the user when sudo requires a password.
+	if sourceFS != nil {
+		if providerSetter, ok := sourceFS.(interface{ SetSudoPasswordProvider(backend.SudoPasswordProvider) }); ok {
+			providerSetter.SetSudoPasswordProvider(func(hostInfo string) (string, bool) {
+				if m.program == nil {
+					slog.Error("Cannot request sudo password: program reference is nil")
+					return "", false
+				}
+				resultCh := make(chan SudoPasswordResponseMsg, 1)
+				m.program.Send(SudoPasswordRequestMsg{
+					ConnectionName: hostInfo,
+					HostInfo:       hostInfo,
+					ResultCh:       resultCh,
+				})
+				result := <-resultCh
+				return result.Password, result.OK
+			})
+		}
+	}
+
 	var operation processbar.OperationType
 	if cut {
 		operation = processbar.OpCut
@@ -498,13 +615,13 @@ func (m *model) executePasteOperation(processBarModel *processbar.Model,
 	p, err := processBarModel.SendAddProcessMsg(
 		filepath.Base(items[0]),
 		operation,
-		getTotalFilesCnt(items, sourceFS), true)
+		totalFiles, true)
 	if err != nil {
 		slog.Error("Cannot spawn a new process", "error", err)
 		return NewPasteOperationMsg(processbar.Failed, reqID)
 	}
 	finalizer := func(state processbar.ProcessState, reqId int) tea.Msg { return NewPasteOperationMsg(state, reqId) }
-	processor := makePasteProcessor(p, processBarModel, panelLocation, cut, sourceFS, targetFS)
+	processor := makePasteProcessor(p, processBarModel, panelLocation, cut, sourceFS, targetFS, m.program)
 	msg := m.runFileProcessor(processor, finalizer, items, reqID)
 	return msg
 }

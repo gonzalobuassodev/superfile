@@ -36,6 +36,13 @@ func (msg updateProcessMsg) Apply(m *Model) (Cmd, error) {
 	return m.GetListenCmd(), m.UpdateExistingProcess(msg.NewProcess)
 }
 
+// NewUpdateProcessMsg creates an exported UpdateMsg from a Process, so that
+// external code can construct an updateProcessMsg and send it directly to the
+// Bubbletea event loop via program.Send() (bypassing the channel).
+func NewUpdateProcessMsg(p Process) UpdateMsg {
+	return updateProcessMsg{NewProcess: p, BaseMsg: BaseMsg{reqID: -1}}
+}
+
 // Construction will be options UpdateName(), UpdateDone(), etc..
 
 type stopListeningMsg struct {

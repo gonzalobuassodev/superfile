@@ -19,6 +19,7 @@ import (
 	"github.com/yorukot/superfile/src/internal/ui/sidebar"
 
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/yorukot/superfile/src/internal/ui/prompt"
 	zoxideui "github.com/yorukot/superfile/src/internal/ui/zoxide"
@@ -62,10 +63,11 @@ type model struct {
 	focusPanel      focusPanelType
 
 	// Modals
-	notifyModel     notify.Model
-	typingModal     typingModal
-	passwordModal   passwordModal
-	helpMenu        helpmenu.Model
+	notifyModel        notify.Model
+	typingModal        typingModal
+	passwordModal      passwordModal
+	sudoPasswordModal  sudoPasswordModal
+	helpMenu           helpmenu.Model
 	promptModal     prompt.Model
 	zoxideModal     zoxideui.Model
 	sortModal       sortmodel.Model
@@ -103,11 +105,26 @@ type model struct {
 	// Each entry maps to the FileSystem for cleanup on quit.
 	activeConnections map[string]backend.FileSystem
 
+	// program is a reference to the Bubbletea program, used for sending
+	// messages from background goroutines to the event loop.
+	program *tea.Program
+
+	// sudoPasswordResultCh receives the user's response from the sudo
+	// password modal. Set by SudoPasswordRequestMsg handling.
+	sudoPasswordResultCh chan SudoPasswordResponseMsg
+
 	// whether usable trash directory exists or not
 	hasTrash bool
 
 	// pendingSSHDeleteName holds the SSH connection name being confirmed for deletion.
 	pendingSSHDeleteName string
+
+	// backgroundCache caches the mainComponentsRender() output when the sudo
+	// password modal is open, avoiding full re-renders on every keystroke.
+	// backgroundCacheValid is false initially and when the background needs
+	// to be re-rendered (modal opens, window resize).
+	backgroundCache        string
+	backgroundCacheValid   bool
 }
 
 type typingModal struct {
@@ -125,6 +142,13 @@ type passwordModal struct {
 	host           string
 	port           int
 	user           string
+}
+
+type sudoPasswordModal struct {
+	open          bool
+	textInput     textinput.Model
+	errorMesssage string
+	hostInfo      string
 }
 
 type editorFinishedMsg struct{ err error }

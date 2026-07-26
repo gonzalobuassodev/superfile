@@ -69,9 +69,26 @@ func (m *Model) AddOrUpdateProcess(p Process) {
 }
 
 func (m *Model) UpdateExistingProcess(p Process) error {
-	if _, ok := m.processes[p.ID]; !ok {
+	existing, ok := m.processes[p.ID]
+	if !ok {
+		slog.Error("UpdateExistingProcess: process not found",
+			"id", p.ID, "state", p.State, "done", p.Done, "total", p.Total)
 		return &NoProcessFoundError{id: p.ID}
 	}
+	// Reject stale InOperation updates for processes already in a terminal
+	// state (Successful or Failed). This prevents a race where a progress
+	// update sent via the channel (before markProcessDone) arrives AFTER
+	// markProcessDone's direct program.Send() — the stale message would
+	// revert the progress bar from "Copied" back to "Copying".
+	if p.State == InOperation &&
+		(existing.State == Successful || existing.State == Failed) {
+		slog.Debug("UpdateExistingProcess: ignoring stale InOperation update",
+			"id", p.ID, "existingState", existing.State)
+		return nil
+	}
+	slog.Debug("UpdateExistingProcess updated",
+		"id", p.ID, "state", p.State,
+		"done", p.Done, "total", p.Total)
 	m.processes[p.ID] = p
 	return nil
 }

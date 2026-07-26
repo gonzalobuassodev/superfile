@@ -146,6 +146,32 @@ func (m *model) passwordModalRender() string {
 		Render(header + "\n" + m.passwordModal.textInput.View() + "\n\n" + tip + err)
 }
 
+func (m *model) sudoPasswordModalRender() string {
+	hostInfo := m.sudoPasswordModal.hostInfo
+	header := common.FilePanelTopDirectoryIconStyle.Render(" "+icon.SSH+icon.Space) +
+		common.FilePanelTopPathStyle.Render(
+			common.TruncateTextBeginning(
+				"Sudo Password for "+hostInfo,
+				common.ModalWidth-common.InnerPadding,
+				"...",
+			),
+		) + "\n"
+
+	confirm := common.ModalConfirm.Render(" (" + common.Hotkeys.ConfirmTyping[0] + ") Submit ")
+	cancel := common.ModalCancel.Render(" (" + common.Hotkeys.CancelTyping[0] + ") Cancel ")
+
+	tip := confirm +
+		lipgloss.NewStyle().Background(common.ModalBGColor).Render("           ") +
+		cancel
+
+	var err string
+	if m.sudoPasswordModal.errorMesssage != "" {
+		err = "\n\n" + common.ModalErrorStyle.Render(m.sudoPasswordModal.errorMesssage)
+	}
+	return common.ModalBorderStyle(common.ModalHeight, common.ModalWidth).
+		Render(header + "\n" + m.sudoPasswordModal.textInput.View() + "\n\n" + tip + err)
+}
+
 func (m *model) promptModalRender() string {
 	return m.promptModal.Render()
 }
