@@ -128,6 +128,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slog.Debug("Got SudoPasswordRequestMsg", "connection", msg.ConnectionName)
 		m.sudoPasswordModal.open = true
 		m.sudoPasswordModal.hostInfo = msg.HostInfo
+		m.sudoPasswordModal.forLocal = msg.ConnectionName == "Local File System"
 		m.sudoPasswordModal.textInput = common.GenerateSudoPasswordTextInput()
 		m.sudoPasswordModal.errorMesssage = ""
 		m.sudoPasswordResultCh = msg.ResultCh

@@ -85,9 +85,13 @@ func markProcessDone(process processbar.Process, processBarModel *processbar.Mod
 }
 
 func formatFileError(filePath string, err error) string {
-	var e *os.LinkError
-	if errors.As(err, &e) {
-		return fmt.Sprintf("Deleting %s: \n%s", filePath, e.Err.Error())
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return fmt.Sprintf("Deleting %s: \n%s", filePath, linkErr.Err.Error())
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return fmt.Sprintf("Deleting %s: \n%s", filePath, pathErr.Err.Error())
 	}
 	return err.Error()
 }
@@ -199,6 +203,29 @@ func (m *model) deleteOperation(processBarModel *processbar.Model, items []strin
 	if len(items) == 0 {
 		return NewDeleteOperationMsg(processbar.Cancelled, reqID)
 	}
+
+	// Set up sudo password provider for the filesystem if it supports it.
+	// This allows Remove/RemoveAll to prompt the user when sudo requires a
+	// password on the remote server (SFTP + SSH).
+	if fs != nil {
+		if providerSetter, ok := fs.(interface{ SetSudoPasswordProvider(backend.SudoPasswordProvider) }); ok {
+			providerSetter.SetSudoPasswordProvider(func(hostInfo string) (string, bool) {
+				if m.program == nil {
+					slog.Error("Cannot request sudo password: program reference is nil")
+					return "", false
+				}
+				resultCh := make(chan SudoPasswordResponseMsg, 1)
+				m.program.Send(SudoPasswordRequestMsg{
+					ConnectionName: hostInfo,
+					HostInfo:       hostInfo,
+					ResultCh:       resultCh,
+				})
+				result := <-resultCh
+				return result.Password, result.OK
+			})
+		}
+	}
+
 	p, err := processBarModel.SendAddProcessMsg(filepath.Base(items[0]), processbar.OpDelete, len(items), true)
 	if err != nil {
 		slog.Error("Cannot spawn a new process", "error", err)

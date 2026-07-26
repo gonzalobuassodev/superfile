@@ -148,7 +148,13 @@ func (m *model) passwordModalRender() string {
 
 func (m *model) sudoPasswordModalRender() string {
 	hostInfo := m.sudoPasswordModal.hostInfo
-	header := common.FilePanelTopDirectoryIconStyle.Render(" "+icon.SSH+icon.Space) +
+	var iconStr string
+	if m.sudoPasswordModal.forLocal {
+		iconStr = icon.Terminal
+	} else {
+		iconStr = icon.SSH
+	}
+	header := common.FilePanelTopDirectoryIconStyle.Render(" "+iconStr+icon.Space) +
 		common.FilePanelTopPathStyle.Render(
 			common.TruncateTextBeginning(
 				"Sudo Password for "+hostInfo,

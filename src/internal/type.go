@@ -149,6 +149,7 @@ type sudoPasswordModal struct {
 	textInput     textinput.Model
 	errorMesssage string
 	hostInfo      string
+	forLocal      bool // true when requesting sudo for a local file operation
 }
 
 type editorFinishedMsg struct{ err error }

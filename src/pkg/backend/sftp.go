@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,14 +92,31 @@ func (fs *sftpFS) Remove(path string) error {
 	if fs.client == nil {
 		return errors.New("sftpFS: client is nil")
 	}
-	return fs.client.Remove(path)
+	err := fs.client.Remove(path)
+	if err != nil && isPermissionDenied(err) {
+		slog.Debug("SFTP Remove failed with permission denied, retrying via sudo",
+			"path", path)
+		return fs.sudoRm(path)
+	}
+	return err
 }
 
 func (fs *sftpFS) RemoveAll(path string) error {
 	if fs.client == nil {
 		return errors.New("sftpFS: client is nil")
 	}
-	// Walk the tree bottom-up so directories are empty when removed
+	err := fs.sftpRemoveAll(path)
+	if err != nil && isPermissionDenied(err) {
+		slog.Debug("SFTP RemoveAll failed with permission denied, retrying via sudo",
+			"path", path)
+		return fs.sudoRm(path)
+	}
+	return err
+}
+
+// sftpRemoveAll performs the recursive remove via the SFTP protocol only.
+// It walks the tree bottom-up so directories are empty when removed.
+func (fs *sftpFS) sftpRemoveAll(path string) error {
 	var entries []struct {
 		path string
 		dir  bool
@@ -312,6 +330,93 @@ func (fs *sftpFS) sudoCatWithPassword(path, password string) (io.ReadCloser, err
 	stdin.Close()
 
 	return &sudoReadCloser{session: sess, reader: stdout}, nil
+}
+
+// sudoRm attempts to remove a file or directory tree using sudo over SSH.
+// It first checks for NOPASSWD sudo, and if not available, calls the
+// SudoPasswordProvider to prompt the user for credentials.
+func (fs *sftpFS) sudoRm(path string) error {
+	if fs.sshClient == nil {
+		return errors.New("sftpFS: no SSH client available for sudo rm")
+	}
+
+	// Lightweight check: sudo -n true — no file data, fast round trip.
+	checkSess, err := fs.sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	nopasswd := sudoCheckNopasswd(checkSess)
+	checkSess.Close()
+
+	if nopasswd {
+		return fs.sudoRmExec(path)
+	}
+
+	// Sudo requires a password — ask via the provider.
+	if fs.sudoPasswordProvider == nil {
+		return errors.New("sudo password required but no password provider " +
+			"configured; set a SudoPasswordProvider on the SFTP filesystem, " +
+			"or configure NOPASSWD sudo for the remote user")
+	}
+
+	password, ok := fs.sudoPasswordProvider(fs.name)
+	if !ok {
+		return errors.New("sudo password prompt cancelled by user")
+	}
+
+	return fs.sudoRmWithPassword(path, password)
+}
+
+// sudoRmExec runs sudo rm -rf over SSH (no password required).
+func (fs *sftpFS) sudoRmExec(path string) error {
+	sess, err := fs.sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	defer sess.Close()
+
+	var stderrBuf strings.Builder
+	sess.Stderr = &stderrBuf
+
+	if err := sess.Run("sudo rm -rf " + sshQuote(path)); err != nil {
+		return fmt.Errorf("sudo rm failed: %w\n%s", err, stderrBuf.String())
+	}
+	return nil
+}
+
+// sudoRmWithPassword runs sudo -S rm -rf over SSH, sending the password
+// to sudo's stdin prompt.
+func (fs *sftpFS) sudoRmWithPassword(path, password string) error {
+	sess, err := fs.sshClient.NewSession()
+	if err != nil {
+		return fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	defer sess.Close()
+
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+
+	var stderrBuf strings.Builder
+	sess.Stderr = &stderrBuf
+
+	if err := sess.Start("sudo -S rm -rf " + sshQuote(path)); err != nil {
+		stdin.Close()
+		return fmt.Errorf("failed to exec sudo -S rm: %w", err)
+	}
+
+	// Send the password followed by newline to sudo's stdin prompt
+	if _, err := fmt.Fprintf(stdin, "%s\n", password); err != nil {
+		stdin.Close()
+		return fmt.Errorf("failed to send sudo password: %w", err)
+	}
+	stdin.Close()
+
+	if err := sess.Wait(); err != nil {
+		return fmt.Errorf("sudo rm failed: %w\n%s", err, stderrBuf.String())
+	}
+	return nil
 }
 
 func (fs *sftpFS) Close() error {
