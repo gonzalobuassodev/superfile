@@ -498,7 +498,7 @@ func (m *model) executePasteOperation(processBarModel *processbar.Model,
 	p, err := processBarModel.SendAddProcessMsg(
 		filepath.Base(items[0]),
 		operation,
-		getTotalFilesCnt(items), true)
+		getTotalFilesCnt(items, sourceFS), true)
 	if err != nil {
 		slog.Error("Cannot spawn a new process", "error", err)
 		return NewPasteOperationMsg(processbar.Failed, reqID)
@@ -509,25 +509,29 @@ func (m *model) executePasteOperation(processBarModel *processbar.Model,
 	return msg
 }
 
-func getTotalFilesCnt(copyItems []string) int {
+func getTotalFilesCnt(copyItems []string, sourceFS backend.FileSystem) int {
 	totalFiles := 0
 	for _, folderPath := range copyItems {
-		// TODO : Fix this. This is inefficient
-		// In case of a cut operations for a directory with a lot of files
-		// we are unnecessarily walking the whole directory recursively
-		// while os will just perform a rename
-		// So instead of few operations this will cause the cut paste
-		// to read the whole directory recursively
-		// we should avoid doing this.
-		// Although this allows us a more detailed progress tracking
-		// this make the copy/cut more inefficient
-		// instead, we could just track progress based on total items in
-		// copyItems
-		// efficiency should be prioritized over more detailed feedback.
-		count, err := countFiles(folderPath)
-		if err != nil {
-			slog.Error("Error in countFiles", "error", err)
-			continue
+		count := 0
+		// For remote operations use the source FS's Walk (items are remote paths).
+		// For local operations use filepath.Walk.
+		if sourceFS != nil {
+			_ = sourceFS.Walk(folderPath, func(_ string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if !info.IsDir() {
+					count++
+				}
+				return nil
+			})
+		} else {
+			var err error
+			count, err = countFiles(folderPath)
+			if err != nil {
+				slog.Error("Error in countFiles", "error", err)
+				continue
+			}
 		}
 		totalFiles += count
 	}
