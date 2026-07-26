@@ -121,6 +121,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SSHConnectedMsg:
 		slog.Debug("Got SSHConnectedMsg", "connection", msg.ConnectionName, "error", msg.Error != nil)
 		updateCmd = m.handleSSHConnected(msg)
+	case SSHPasswordResponseMsg:
+		slog.Debug("Got SSHPasswordResponseMsg", "connection", msg.ConnectionName, "error", msg.Error != nil)
+		updateCmd = m.handleSSHPasswordResponse(msg)
 	case RemoteDirLoadedMsg:
 		slog.Debug("Got RemoteDirLoadedMsg", "panel", msg.PanelIndex, "error", msg.Error != nil)
 		if msg.PanelIndex >= 0 && msg.PanelIndex < len(m.fileModel.FilePanels) {
@@ -376,6 +379,8 @@ func (m *model) handleKeyInput(msg tea.KeyPressMsg) tea.Cmd {
 	switch {
 	case m.spfError.IsOpen():
 		cmd = m.spfErrorModelOpenKey(msg.String())
+	case m.passwordModal.open:
+		cmd = m.passwordModalOpenKey(msg.String())
 	case m.typingModal.open:
 		m.typingModalOpenKey(msg.String())
 	case m.promptModal.IsOpen():
@@ -452,6 +457,8 @@ func (m *model) updateComponentState(msg tea.Msg) tea.Cmd {
 		focusPanel.Rename, cmd = focusPanel.Rename.Update(msg)
 	case focusPanel.SearchBar.Focused():
 		focusPanel.SearchBar, cmd = focusPanel.SearchBar.Update(msg)
+	case m.passwordModal.open:
+		m.passwordModal.textInput, cmd = m.passwordModal.textInput.Update(msg)
 	case m.typingModal.open:
 		m.typingModal.textInput, cmd = m.typingModal.textInput.Update(msg)
 	case m.promptModal.IsOpen():
@@ -648,6 +655,13 @@ func (m *model) updateRenderForOverlay(finalRender string) string {
 		return stringfunction.PlaceOverlay(overlayX, overlayY, introduceModal, finalRender)
 	}
 
+	if m.passwordModal.open {
+		passwordModal := m.passwordModalRender()
+		overlayX := m.fullWidth/common.CenterDivisor - common.ModalWidth/common.CenterDivisor
+		overlayY := m.fullHeight/common.CenterDivisor - common.ModalHeight/common.CenterDivisor
+		return stringfunction.PlaceOverlay(overlayX, overlayY, passwordModal, finalRender)
+	}
+
 	if m.typingModal.open {
 		typingModal := m.typineModalRender()
 		overlayX := m.fullWidth/common.CenterDivisor - common.ModalWidth/common.CenterDivisor
@@ -750,17 +764,16 @@ func (m *model) handleConnectToSSH(connectionName string) tea.Cmd {
 
 		sftpClient, dialErr := backend.DialWithKey(conn.Host, conn.Port, conn.User, conn.KeyPath, backend.DefaultSSHTimeout)
 		if dialErr != nil {
-			// If key auth fails, try password auth (will fail gracefully if no password stored)
-			if conn.AuthType == "password" {
-				return SSHConnectedMsg{
-					ConnectionName: connectionName,
-					Error:          fmt.Errorf("password auth not supported via CLI; use key auth: %w", dialErr),
-				}
-			}
-			return SSHConnectedMsg{
-				ConnectionName: connectionName,
-				Error:          fmt.Errorf("failed to dial SSH: %w", dialErr),
-			}
+			// Key auth failed — open the password modal if the connection
+			// is configured for password auth or fall back to asking.
+			m.passwordModal.connectionName = connectionName
+			m.passwordModal.host = conn.Host
+			m.passwordModal.port = conn.Port
+			m.passwordModal.user = conn.User
+			m.passwordModal.open = true
+			m.passwordModal.textInput = common.GeneratePasswordTextInput()
+			m.passwordModal.errorMesssage = ""
+			return nil
 		}
 
 		fs := backend.NewSFTPFileSystem(sftpClient, connectionName)
@@ -802,6 +815,48 @@ func (m *model) handleSSHConnected(msg SSHConnectedMsg) tea.Cmd {
 		return nil
 	}
 
+	m.notifyModel = notify.New(false, "Connected",
+		"SSH connection '"+msg.ConnectionName+"' established", notify.NoAction)
+	return cmd
+}
+
+// handleSSHPasswordResponse processes the result of a password-based SSH
+// connection attempt. On success, it stores the connection and creates a
+// remote file panel. On failure, it shows the error in the password modal
+// and keeps the modal open for retry.
+func (m *model) handleSSHPasswordResponse(msg SSHPasswordResponseMsg) tea.Cmd {
+	m.passwordModal.open = false
+
+	if msg.Error != nil {
+		slog.Error("SSH password connection failed", "name", msg.ConnectionName, "error", msg.Error)
+		m.passwordModal.errorMesssage = msg.Error.Error()
+		m.passwordModal.open = true
+		return nil
+	}
+
+	// Store the connection
+	if m.activeConnections == nil {
+		m.activeConnections = make(map[string]backend.FileSystem)
+	}
+	m.activeConnections[msg.ConnectionName] = msg.FS
+
+	// Create a new file panel with the remote filesystem
+	cmd, err := m.fileModel.CreateNewFilePanel("/", msg.FS)
+	if err != nil {
+		slog.Error("Error creating remote file panel", "error", err)
+		m.notifyModel = notify.New(false, "Error",
+			"Failed to create panel: "+err.Error(), notify.NoAction)
+
+		// Close the connection since the panel failed
+		if closeErr := msg.FS.Close(); closeErr != nil {
+			slog.Error("Error closing remote FS after panel failure", "error", closeErr)
+		}
+		delete(m.activeConnections, msg.ConnectionName)
+		return nil
+	}
+
+	m.passwordModal.errorMesssage = ""
+	m.passwordModal.open = false
 	m.notifyModel = notify.New(false, "Connected",
 		"SSH connection '"+msg.ConnectionName+"' established", notify.NoAction)
 	return cmd

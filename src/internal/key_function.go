@@ -2,6 +2,7 @@ package internal
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"slices"
@@ -260,6 +261,56 @@ func (m *model) filePanelNormalModeKey(msg string) tea.Cmd {
 		m.copyPath()
 	case slices.Contains(common.Hotkeys.CopyPWD, msg):
 		m.copyPWD()
+	}
+	return nil
+}
+
+// passwordModalOpenKey handles keyboard input when the password modal is open.
+// Enter submits the password (spawning a background goroutine that calls
+// backend.DialWithPassword), Escape cancels. Text input character handling
+// is done in updateComponentState via the full tea.Msg.
+func (m *model) passwordModalOpenKey(msg string) tea.Cmd {
+	switch {
+	case slices.Contains(common.Hotkeys.ConfirmTyping, msg):
+		password := m.passwordModal.textInput.Value()
+		if password == "" {
+			m.passwordModal.errorMesssage = "Password cannot be empty"
+			return nil
+		}
+
+		connName := m.passwordModal.connectionName
+		host := m.passwordModal.host
+		port := m.passwordModal.port
+		user := m.passwordModal.user
+
+		// Close modal and reset
+		m.passwordModal.open = false
+		m.passwordModal.textInput.Reset()
+		m.passwordModal.errorMesssage = ""
+
+		// Spawn background goroutine that dials with password
+		return func() tea.Msg {
+			sftpClient, err := backend.DialWithPassword(host, port, user, password, backend.DefaultSSHTimeout)
+			if err != nil {
+				return SSHPasswordResponseMsg{
+					ConnectionName: connName,
+					Error:          fmt.Errorf("SSH password auth failed: %w", err),
+				}
+			}
+			fs := backend.NewSFTPFileSystem(sftpClient, connName)
+			return SSHPasswordResponseMsg{
+				ConnectionName: connName,
+				FS:             fs,
+			}
+		}
+
+	case slices.Contains(common.Hotkeys.CancelTyping, msg):
+		m.passwordModal.open = false
+		m.passwordModal.textInput.Reset()
+		m.passwordModal.errorMesssage = ""
+
+	default:
+		return nil
 	}
 	return nil
 }

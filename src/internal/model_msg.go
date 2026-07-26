@@ -169,6 +169,32 @@ func (m MetadataUpdateMsg) ApplyToModel(model *model) tea.Cmd {
 	return processCmdToTeaCmd(model.processBarModel.GetListenCmd())
 }
 
+// SSHPasswordRequestMsg requests a password-based SSH connection.
+type SSHPasswordRequestMsg struct {
+	ConnectionName string
+	Host           string
+	Port           int
+	User           string
+	Password       string
+	BaseMessage
+}
+
+func (m SSHPasswordRequestMsg) ApplyToModel(model *model) tea.Cmd {
+	return processCmdToTeaCmd(model.processBarModel.GetListenCmd())
+}
+
+// SSHPasswordResponseMsg is sent after a password-based SSH connection attempt.
+type SSHPasswordResponseMsg struct {
+	ConnectionName string
+	FS             backend.FileSystem
+	Error          error
+	BaseMessage
+}
+
+func (m SSHPasswordResponseMsg) ApplyToModel(model *model) tea.Cmd {
+	return model.handleSSHPasswordResponse(m)
+}
+
 // --- Constructor Functions ---
 
 // NewDeleteOperationMsg creates a DeleteOperationMsg.

@@ -64,6 +64,7 @@ type model struct {
 	// Modals
 	notifyModel     notify.Model
 	typingModal     typingModal
+	passwordModal   passwordModal
 	helpMenu        helpmenu.Model
 	promptModal     prompt.Model
 	zoxideModal     zoxideui.Model
@@ -114,6 +115,16 @@ type typingModal struct {
 	open          bool
 	textInput     textinput.Model
 	errorMesssage string
+}
+
+type passwordModal struct {
+	open           bool
+	textInput      textinput.Model
+	errorMesssage  string
+	connectionName string
+	host           string
+	port           int
+	user           string
 }
 
 type editorFinishedMsg struct{ err error }

@@ -169,6 +169,18 @@ func GenerateRenameTextInput(width int, cursorPos int, defaultValue string) text
 	return ti
 }
 
+func GeneratePasswordTextInput() textinput.Model {
+	ti := textinput.New()
+	ti.EchoMode = textinput.EchoPassword
+	ti.EchoCharacter = '*'
+	ti.Placeholder = "Enter SSH password"
+	setTextInputStyles(&ti, ModalStyle, ModalStyle)
+	ti.Focus()
+	ti.CharLimit = 256
+	ti.SetWidth(ModalWidth - 10)
+	return ti
+}
+
 func GenerateSSHAddInput(width int) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = FilePanelCursorStyle.Render(icon.SSH + icon.Space)

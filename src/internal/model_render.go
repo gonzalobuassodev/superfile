@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"fmt"
 	"path/filepath"
 	"strconv"
 
@@ -117,6 +118,32 @@ func (m *model) introduceModalRender() string {
 	return common.FirstUseModal(m.helpMenu.GetHeight(), m.helpMenu.GetWidth()).
 		Render(title + "\n\n" + vimUserWarn + "\n\n" + subOne + "\n\n" +
 			subTwo + "\n\n" + subThree + "\n\n" + subFour + "\n\n")
+}
+
+func (m *model) passwordModalRender() string {
+	connInfo := m.passwordModal.user + "@" + m.passwordModal.host + ":" + fmt.Sprintf("%d", m.passwordModal.port)
+	header := common.FilePanelTopDirectoryIconStyle.Render(" "+icon.SSH+icon.Space) +
+		common.FilePanelTopPathStyle.Render(
+			common.TruncateTextBeginning(
+				"SSH Password for "+connInfo,
+				common.ModalWidth-common.InnerPadding,
+				"...",
+			),
+		) + "\n"
+
+	confirm := common.ModalConfirm.Render(" (" + common.Hotkeys.ConfirmTyping[0] + ") Connect ")
+	cancel := common.ModalCancel.Render(" (" + common.Hotkeys.CancelTyping[0] + ") Cancel ")
+
+	tip := confirm +
+		lipgloss.NewStyle().Background(common.ModalBGColor).Render("           ") +
+		cancel
+
+	var err string
+	if m.passwordModal.errorMesssage != "" {
+		err = "\n\n" + common.ModalErrorStyle.Render(m.passwordModal.errorMesssage)
+	}
+	return common.ModalBorderStyle(common.ModalHeight, common.ModalWidth).
+		Render(header + "\n" + m.passwordModal.textInput.View() + "\n\n" + tip + err)
 }
 
 func (m *model) promptModalRender() string {
